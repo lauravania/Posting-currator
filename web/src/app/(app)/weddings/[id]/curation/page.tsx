@@ -2,9 +2,9 @@ import { requireSession } from "@/lib/session";
 import { requireWeddingInOrg } from "@/lib/db-scope";
 import { prisma } from "@/lib/prisma";
 import { getStorageAdapter } from "@/lib/storage";
-import { SectionHeading } from "@/components/ui/stat";
 import { PhotoCard, type PhotoCardData } from "@/components/photos/photo-card";
 import { RunCurationButton } from "@/components/photos/run-curation-button";
+import { TopPicks, type TopPickData } from "@/components/curation/top-picks";
 import { isDemoMode } from "@/lib/ai";
 
 export default async function WeddingCurationPage({ params }: { params: { id: string } }) {
@@ -45,33 +45,52 @@ export default async function WeddingCurationPage({ params }: { params: { id: st
   const maybe = analyzed.filter((p) => p.analysis!.verdict === "MAYBE");
   const reject = analyzed.filter((p) => p.analysis!.verdict === "REJECT");
 
+  const topPicks: TopPickData[] = top10.map((p, i) => ({
+    id: p.id,
+    imageUrl: storage.publicUrl(p.thumbnailKey ?? p.storageKey),
+    rank: i + 1,
+    totalScore: p.analysis!.totalScore,
+    technicalScore: p.analysis!.technicalScore,
+    compositionScore: p.analysis!.compositionScore,
+    editorialScore: p.analysis!.editorialScore,
+    brandFitScore: p.analysis!.brandFitScore,
+    verdict: p.analysis!.verdict,
+    verdictReason: p.analysis!.verdictReason ?? "",
+    categories: p.categories,
+    provider: p.analysis!.provider,
+  }));
+
   return (
-    <div className="space-y-14">
-      <div className="flex items-start justify-between">
-        <SectionHeading
-          eyebrow="AI Curation"
-          title={analyzed.length > 0 ? `${keep.length} keepers · ${maybe.length} maybes · ${reject.length} rejected` : "No analysis yet"}
-        />
+    <div className="space-y-16">
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-hairline pb-6">
+        <div>
+          <p className="eyebrow mb-2">AI Curation</p>
+          <h1 className="font-serif text-3xl">
+            {analyzed.length > 0 ? "The edit" : "Nothing curated yet"}
+          </h1>
+          {analyzed.length > 0 && (
+            <p className="font-sans text-sm text-ink-soft mt-2">
+              {keep.length} keeper{keep.length === 1 ? "" : "s"} · {maybe.length} maybe{maybe.length === 1 ? "" : "s"} ·{" "}
+              {reject.length} rejected
+              {isDemoMode() && " · Demo Mode"}
+            </p>
+          )}
+        </div>
+        <RunCurationButton weddingId={wedding.id} pendingCount={pendingCount} />
       </div>
 
       {isDemoMode() && (
-        <p className="font-sans text-xs text-ink-soft border border-hairline px-4 py-3 -mt-8">
+        <p className="font-sans text-xs text-ink-soft -mt-10">
           Demo Mode: technical and composition scores are computed from the real image pixels. Emotional/editorial
           scoring and object/people detection require a connected OPENAI_API_KEY to reflect genuine semantic
           understanding — until then, editorial scores are a conservative estimate.
         </p>
       )}
 
-      <RunCurationButton weddingId={wedding.id} pendingCount={pendingCount} />
-
-      {top10.length > 0 && (
+      {topPicks.length > 0 && (
         <section>
-          <SectionHeading eyebrow="Selection" title="Top 10 — why each was selected" />
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-            {top10.map((p) => (
-              <PhotoCard key={p.id} photo={toCard(p)} />
-            ))}
-          </div>
+          <p className="eyebrow mb-6">Top 10 — why each was selected</p>
+          <TopPicks picks={topPicks} />
         </section>
       )}
 
@@ -80,8 +99,11 @@ export default async function WeddingCurationPage({ params }: { params: { id: st
         if (group.length === 0) return null;
         return (
           <section key={verdict}>
-            <SectionHeading eyebrow="Curation board" title={`${verdict[0]}${verdict.slice(1).toLowerCase()} (${group.length})`} />
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            <p className="eyebrow mb-6">
+              {verdict[0]}
+              {verdict.slice(1).toLowerCase()} board ({group.length})
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-10">
               {group.map((p) => (
                 <PhotoCard key={p.id} photo={toCard(p)} />
               ))}

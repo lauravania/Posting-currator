@@ -81,9 +81,19 @@ export function PhotoCard({ photo, selectable, selected, onToggleSelect }: {
   }
 
   return (
-    <div className={`group relative border ${selected ? "border-gold" : "border-hairline"} bg-paper/30`}>
-      <div className="relative aspect-[4/5] overflow-hidden bg-paper cursor-pointer" onClick={() => setExpanded((e) => !e)}>
-        <Image src={photo.thumbnailUrl} alt={photo.originalFilename} fill sizes="300px" className="object-cover" />
+    <div className="group relative">
+      <div
+        className={`relative aspect-[4/5] overflow-hidden bg-paper cursor-pointer border ${selected ? "border-gold" : "border-transparent"}`}
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <Image
+          src={photo.thumbnailUrl}
+          alt={photo.originalFilename}
+          fill
+          sizes="320px"
+          className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
+        />
+
         {selectable && (
           <button
             type="button"
@@ -94,62 +104,81 @@ export function PhotoCard({ photo, selectable, selected, onToggleSelect }: {
             className={`absolute top-2 left-2 w-5 h-5 border ${selected ? "bg-gold border-gold" : "bg-ivory/80 border-hairline"}`}
           />
         )}
-        {photo.analysis && (
-          <div className="absolute top-2 right-2">
-            <VerdictBadge verdict={photo.analysis.verdict} />
-          </div>
-        )}
-      </div>
 
-      <div className="p-3 font-sans">
-        {photo.analysis ? (
+        {photo.analysis && (
           <>
-            <div className="flex items-center justify-between mb-2">
-              <p className="font-serif text-lg">{photo.analysis.totalScore.toFixed(1)}</p>
-              <p className="text-[10px] text-ink-soft uppercase tracking-wide">{photo.analysis.provider}</p>
+            <div className="absolute top-2 right-2">
+              <VerdictBadge verdict={photo.analysis.verdict} />
             </div>
-            <div className="flex flex-wrap gap-1 mb-2">
-              {photo.categories.slice(0, 2).map((c) => (
-                <span key={c} className="text-[10px] border border-hairline px-1.5 py-0.5 text-ink-soft">
-                  {c}
-                </span>
-              ))}
-            </div>
-            {expanded && (
-              <div className="text-xs text-ink-soft space-y-1 mb-2">
-                <p>Technical {photo.analysis.technicalScore.toFixed(1)} · Composition {photo.analysis.compositionScore.toFixed(1)}</p>
-                <p>Editorial {photo.analysis.editorialScore.toFixed(1)} · Brand fit {photo.analysis.brandFitScore.toFixed(1)}</p>
-                <p className="italic">{photo.analysis.verdictReason}</p>
-                {photo.suggestedContentType && <p>Suggested: {photo.suggestedContentType}</p>}
-              </div>
-            )}
-            <div className="flex gap-1">
-              {(["KEEP", "MAYBE", "REJECT"] as const).map((v) => (
-                <button
-                  key={v}
-                  disabled={busy}
-                  onClick={() => overrideVerdict(v)}
-                  className={`text-[10px] px-2 py-1 border flex-1 ${
-                    photo.analysis?.verdict === v ? "border-ink bg-ink text-ivory" : "border-hairline text-ink-soft hover:text-ink"
-                  }`}
-                >
-                  {v[0]}
-                </button>
-              ))}
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-ink/70 to-transparent pt-8 pb-2 px-2.5">
+              <p className="font-serif text-xl text-ivory">{photo.analysis.totalScore.toFixed(1)}</p>
             </div>
           </>
-        ) : (
+        )}
+
+        {/* Hover/tap-revealed action bar — kept out of the default layout so
+            the photograph itself is what the grid reads as. */}
+        {photo.analysis && (
+          <div
+            className={`absolute inset-x-0 bottom-0 bg-ink/85 backdrop-blur-sm px-2.5 py-2 flex gap-1 transition-opacity ${
+              expanded ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {(["KEEP", "MAYBE", "REJECT"] as const).map((v) => (
+              <button
+                key={v}
+                disabled={busy}
+                onClick={() => overrideVerdict(v)}
+                className={`text-[10px] tracking-wide px-2 py-1 border flex-1 ${
+                  photo.analysis?.verdict === v
+                    ? "border-ivory bg-ivory text-ink"
+                    : "border-ivory/40 text-ivory/80 hover:border-ivory"
+                }`}
+              >
+                {v[0]}
+              </button>
+            ))}
+            <button onClick={remove} disabled={busy} className="text-[10px] text-ivory/70 hover:text-reject px-2">
+              Del
+            </button>
+          </div>
+        )}
+
+        {!photo.analysis && (
           <button
-            onClick={analyze}
+            onClick={(e) => {
+              e.stopPropagation();
+              analyze();
+            }}
             disabled={busy}
-            className="w-full text-xs eyebrow py-2 border border-hairline hover:border-gold"
+            className="absolute inset-x-2 bottom-2 text-xs eyebrow !text-ivory py-2 bg-ink/70 hover:bg-ink"
           >
             {busy ? "Analyzing…" : "Analyze"}
           </button>
         )}
-        <button onClick={remove} disabled={busy} className="mt-2 text-[10px] text-ink-soft hover:text-reject w-full text-right">
-          Delete
-        </button>
+      </div>
+
+      <div className="pt-2.5 font-sans">
+        <div className="flex flex-wrap gap-1 mb-1">
+          {photo.categories.slice(0, 2).map((c) => (
+            <span key={c} className="text-[10px] text-ink-soft">
+              {c}
+            </span>
+          ))}
+        </div>
+        {expanded && photo.analysis && (
+          <div className="text-xs text-ink-soft space-y-1 mt-1 mb-1">
+            <p>
+              Technical {photo.analysis.technicalScore.toFixed(1)} · Composition {photo.analysis.compositionScore.toFixed(1)}
+            </p>
+            <p>
+              Editorial {photo.analysis.editorialScore.toFixed(1)} · Brand fit {photo.analysis.brandFitScore.toFixed(1)}
+            </p>
+            <p className="italic">{photo.analysis.verdictReason}</p>
+            {photo.suggestedContentType && <p>Suggested: {photo.suggestedContentType}</p>}
+          </div>
+        )}
       </div>
     </div>
   );
