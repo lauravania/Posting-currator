@@ -7,9 +7,20 @@ __pycache__/
 .venv/
 venv/
 
-# Downloaded photos and other pipeline data (keep the folder, not its contents)
+# Downloaded / generated photo data (keep the folders, not their contents)
 data/raw_photos/*
 !data/raw_photos/.gitkeep
+data/competitor_photos/*
+!data/competitor_photos/.gitkeep
+data/selected_photos/*
+!data/selected_photos/.gitkeep
+data/.thumbs/
+data/*.json
+data/*.csv
+
+# Generated outputs
+config/style_profile.json
+output/results.json
 
 # OS cruft
 .DS_Store

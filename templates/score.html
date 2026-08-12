@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Score & Review — Wedding Photo Curator{% endblock %}
+{% block content %}
+<h1>Score &amp; Review</h1>
+<p class="subtitle">Runs blur/exposure/eyes-open checks plus an Anthropic vision comparison against your style profile, scoring every photo 1–10. Click a photo to include or exclude it, then confirm your final selection.</p>
+
+<div class="card">
+  <div class="row between">
+    <div id="score-summary" class="muted">Checking status…</div>
+    <div class="step-actions">
+      <button id="score-btn">Run Scoring</button>
+      <button class="secondary" id="confirm-btn">Confirm Selection</button>
+    </div>
+  </div>
+  <div class="progress-bar" id="score-progress-wrap" style="display:none;"><div id="score-progress-fill"></div></div>
+  <div id="score-message" class="muted" style="margin-top:8px;"></div>
+</div>
+
+<div class="card">
+  <div class="row between">
+    <h2 style="margin:0;">Photos (<span id="included-count">0</span> included of <span id="total-count">0</span>)</h2>
+  </div>
+  <div id="score-grid" class="score-grid"></div>
+  <div id="score-empty" class="empty-state">No scored photos yet — run scoring above.</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/score.js"></script>
+{% endblock %}

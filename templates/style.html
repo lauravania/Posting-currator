@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Style Analysis — Wedding Photo Curator{% endblock %}
+{% block content %}
+<h1>Style Analysis</h1>
+<p class="subtitle">Upload a competitor engagement CSV (columns: image filename, likes, comments, saves) plus the matching images. We'll analyze the top 20% of posts by weighted engagement and build a style profile.</p>
+
+<div class="card">
+  <h2>1. Upload</h2>
+  <div class="field">
+    <label for="csv-input">Engagement CSV</label>
+    <input type="file" id="csv-input" accept=".csv">
+    <div class="hint" id="csv-status">No CSV uploaded yet.</div>
+  </div>
+  <div class="field">
+    <label for="images-input">Competitor Images</label>
+    <input type="file" id="images-input" accept="image/*" multiple>
+    <div class="hint" id="images-status">No images uploaded yet.</div>
+  </div>
+  <button id="upload-btn">Upload</button>
+</div>
+
+<div class="card">
+  <h2>2. Analyze</h2>
+  <div class="row between">
+    <div id="analyze-summary" class="muted">Upload files above, then analyze.</div>
+    <button id="analyze-btn">Analyze Style</button>
+  </div>
+  <div class="progress-bar" id="analyze-progress-wrap" style="display:none;"><div id="analyze-progress-fill"></div></div>
+  <div id="analyze-message" class="muted" style="margin-top:8px;"></div>
+</div>
+
+<div class="card" id="profile-card" style="display:none;">
+  <h2>Style Profile</h2>
+  <div id="profile-body"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/style.js"></script>
+{% endblock %}

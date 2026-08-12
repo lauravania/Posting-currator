@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dropbox Connection</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <main class="container" style="max-width:420px; padding-top:60px; text-align:center;">
+    <div class="card">
+      {% if success %}
+        <div style="font-size:2rem;">✅</div>
+        <h2>Connected!</h2>
+      {% else %}
+        <div style="font-size:2rem;">⚠️</div>
+        <h2>Connection failed</h2>
+      {% endif %}
+      <p class="muted">{{ message }}</p>
+      <p class="muted" id="fallback-note" style="display:none;">You can close this window and return to Settings.</p>
+    </div>
+  </main>
+  <script>
+    const success = {{ 'true' if success else 'false' }};
+    const message = {{ message|tojson }};
+    if (window.opener) {
+      window.opener.postMessage(success ? "dropbox-oauth-success" : { type: "dropbox-oauth-error", message }, "*");
+      setTimeout(() => window.close(), success ? 800 : 4000);
+    } else {
+      document.getElementById("fallback-note").style.display = "block";
+      if (success) setTimeout(() => { window.location.href = "/settings"; }, 1200);
+    }
+  </script>
+</body>
+</html>

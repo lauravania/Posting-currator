@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Settings — Wedding Photo Curator{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="subtitle">Enter your credentials once — everything is saved to a local <code>.env</code> file for you. Nothing here is sent anywhere except directly to Dropbox and Anthropic.</p>
+
+<div class="card">
+  <h2>Dropbox</h2>
+  <div class="field">
+    <label for="dropbox_app_key">App Key</label>
+    <input type="text" id="dropbox_app_key" placeholder="from the Dropbox App Console" value="{{ status.dropbox_app_key }}">
+  </div>
+  <div class="field">
+    <label for="dropbox_app_secret">App Secret</label>
+    <input type="password" id="dropbox_app_secret" placeholder="{{ status.dropbox_app_secret_masked or 'from the Dropbox App Console' }}">
+    <div class="hint">Leave blank to keep the currently saved secret.</div>
+  </div>
+  <div class="field">
+    <label for="dropbox_shared_folder_link">Shared Folder Link</label>
+    <input type="url" id="dropbox_shared_folder_link" placeholder="https://www.dropbox.com/scl/fo/..." value="{{ status.dropbox_shared_folder_link }}">
+  </div>
+
+  <div class="row between">
+    <div class="row">
+      <span class="status-dot {{ 'on' if status.dropbox_connected else 'off' }}"></span>
+      <span>{{ 'Dropbox connected' if status.dropbox_connected else 'Dropbox not connected yet' }}</span>
+    </div>
+    <div class="step-actions">
+      <button class="secondary" id="save-btn">Save Settings</button>
+      <button id="connect-btn">Connect Dropbox</button>
+    </div>
+  </div>
+  <p class="hint" style="margin-top:10px;">Save your App Key and Secret first, then click Connect Dropbox — it opens Dropbox's login/allow page in a popup and stores a refresh token automatically.</p>
+</div>
+
+<div class="card">
+  <h2>Anthropic</h2>
+  <div class="field">
+    <label for="anthropic_api_key">API Key</label>
+    <input type="password" id="anthropic_api_key" placeholder="{{ status.anthropic_key_masked or 'sk-ant-...' }}">
+    <div class="hint">Leave blank to keep the currently saved key. From <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.</div>
+  </div>
+  <button class="secondary" id="save-btn-2">Save Settings</button>
+</div>
+
+<div class="card">
+  <h2>Next step</h2>
+  <p class="muted">Once Dropbox is connected and a shared folder link is saved, head to <a href="/fetch">Fetch Photos</a>.</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/settings.js"></script>
+{% endblock %}

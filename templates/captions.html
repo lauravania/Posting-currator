@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Caption & Schedule — Wedding Photo Curator{% endblock %}
+{% block content %}
+<h1>Caption &amp; Schedule</h1>
+<p class="subtitle">Generates a caption, hashtags, alt text, and a suggested post day/time for every confirmed photo. Edit anything inline before saving.</p>
+
+<div class="card">
+  <div class="row between">
+    <div id="captions-summary" class="muted">Checking status…</div>
+    <div class="step-actions">
+      <button id="generate-btn">Generate Captions</button>
+      <button class="secondary" id="save-btn">Save Final Output</button>
+    </div>
+  </div>
+  <div class="progress-bar" id="captions-progress-wrap" style="display:none;"><div id="captions-progress-fill"></div></div>
+  <div id="captions-message" class="muted" style="margin-top:8px;"></div>
+</div>
+
+<div id="posting-slot-card" class="card" style="display:none;">
+  <h2>Suggested Post Time</h2>
+  <div id="posting-slot-body"></div>
+</div>
+
+<div class="caption-list" id="caption-list"></div>
+<div id="captions-empty" class="empty-state">No captions yet — confirm a selection on the Score &amp; Review page, then generate captions above.</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/captions.js"></script>
+{% endblock %}

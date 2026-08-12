@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Wedding Photo Curator{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📸 Wedding Photo Curator</div>
+    <nav class="steps">
+      <a href="/settings" class="{{ 'active' if active == 'settings' }}"><span class="num">1</span> Settings</a>
+      <a href="/fetch" class="{{ 'active' if active == 'fetch' }}"><span class="num">2</span> Fetch Photos</a>
+      <a href="/style" class="{{ 'active' if active == 'style' }}"><span class="num">3</span> Style Analysis</a>
+      <a href="/score" class="{{ 'active' if active == 'score' }}"><span class="num">4</span> Score &amp; Review</a>
+      <a href="/captions" class="{{ 'active' if active == 'captions' }}"><span class="num">5</span> Caption &amp; Schedule</a>
+    </nav>
+  </header>
+
+  <div id="toast-container"></div>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/js/common.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

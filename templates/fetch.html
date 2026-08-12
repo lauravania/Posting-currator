@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Fetch Photos — Wedding Photo Curator{% endblock %}
+{% block content %}
+<h1>Fetch Photos</h1>
+<p class="subtitle">Pull every image from your connected Dropbox shared folder into <code>data/raw_photos/</code>. Non-image files are skipped automatically, and re-running only downloads what's new.</p>
+
+<div class="card">
+  <div class="row between">
+    <div id="fetch-summary" class="muted">Checking status…</div>
+    <button id="fetch-btn">Fetch Photos</button>
+  </div>
+  <div class="progress-bar" id="progress-wrap" style="display:none;"><div id="progress-bar-fill"></div></div>
+  <div id="fetch-message" class="muted" style="margin-top:8px;"></div>
+  <div id="fetch-errors" style="margin-top:8px;"></div>
+</div>
+
+<div class="card">
+  <h2>Downloaded Photos (<span id="gallery-count">0</span>)</h2>
+  <div id="gallery" class="gallery"></div>
+  <div id="gallery-empty" class="empty-state">No photos downloaded yet.</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/fetch.js"></script>
+{% endblock %}
