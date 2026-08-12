@@ -1,0 +1,16 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Downloaded photo data
+data/raw_photos/
+data/*.jsonl
+data/*.csv
+
+# OS cruft
+.DS_Store
