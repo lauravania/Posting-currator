@@ -1,9 +1,20 @@
-# Posting Curator — Wedding Photo Curation
+# Posting Curator — Wedding Marketing Intelligence
+
+The full application — Wedding Projects, AI photo curation, Brand
+Settings, Competitor Intelligence, the Content Studio/Copywriter, Content
+Calendar, Analytics, and the AI Marketing Director — lives in **[`web/`](web/README.md)**.
+See `web/README.md` for architecture, setup, and what's implemented.
+
+This top-level `scripts/` pipeline is a standalone utility for pulling a
+raw wedding photo dump out of a shared Dropbox folder before uploading it
+into the app's Photo Library.
+
+## Dropbox fetch script
 
 A small pipeline for curating wedding photos, starting with fetching the
 raw photo dump from a shared Dropbox folder.
 
-## Setup
+### Setup
 
 1. **Install dependencies**
 

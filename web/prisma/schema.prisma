@@ -1,0 +1,467 @@
+// Wedding Marketing Intelligence — Prisma schema
+//
+// Every domain table carries an `organizationId` so query helpers can
+// enforce org-level data isolation consistently (see src/lib/db-scope.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity & tenancy
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships     OrganizationMember[]
+  recommendations AIRecommendation[]
+
+  @@index([email])
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members         OrganizationMember[]
+  brand           Brand?
+  weddings        Wedding[]
+  competitors     Competitor[]
+  hashtagSets     HashtagSet[]
+  analytics       Analytics[]
+  recommendations AIRecommendation[]
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgRole  @default(OWNER)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Brand style engine
+// ---------------------------------------------------------------------------
+
+model Brand {
+  id               String   @id @default(cuid())
+  organizationId   String   @unique
+  name             String
+  description      String?
+  targetCustomer   String?
+  luxuryLevel      Int      @default(8) // 1-10
+  visualStyle      String[] @default([])
+  preferredColors  String[] @default([])
+  photographyStyle String[] @default([])
+  writingStyle     String[] @default([])
+  wordsToUse       String[] @default([])
+  wordsToAvoid     String[] @default([])
+  primaryLocations String[] @default([])
+  positioning      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Weddings & vendors
+// ---------------------------------------------------------------------------
+
+model Wedding {
+  id             String    @id @default(cuid())
+  organizationId String
+  coupleName     String
+  weddingDate    DateTime?
+  venue          String?
+  location       String?
+  planner        String?
+  stylist        String?
+  decorator      String?
+  photographer   String?
+  videographer   String?
+  makeupArtist   String?
+  florist        String?
+  dressDesigner  String?
+  otherVendors   String?
+  description    String?
+  coupleStory    String?
+  concept        String?
+  colorPalette   String[]  @default([])
+  designKeywords String[]  @default([])
+  targetAudience String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  photos       Photo[]
+  vendors      Vendor[]
+  contentIdeas ContentIdea[]
+  contentPosts ContentPost[]
+
+  @@index([organizationId])
+}
+
+enum VendorRelationship {
+  PARTNER
+  CLIENT_HIRED
+  ONE_OFF
+  IN_HOUSE
+}
+
+model Vendor {
+  id                     String             @id @default(cuid())
+  weddingId              String
+  name                   String
+  instagramHandle        String?
+  category               String
+  website                String?
+  location               String?
+  relationship           VendorRelationship @default(ONE_OFF)
+  preferredTaggingFormat String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  wedding Wedding @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+
+  @@index([weddingId])
+}
+
+// ---------------------------------------------------------------------------
+// Photo library & AI analysis
+// ---------------------------------------------------------------------------
+
+enum CurationVerdict {
+  PENDING
+  KEEP
+  MAYBE
+  REJECT
+}
+
+model Photo {
+  id               String   @id @default(cuid())
+  weddingId        String
+  storageKey       String // path/key in the storage adapter
+  thumbnailKey     String?
+  originalFilename String
+  mimeType         String
+  fileSizeBytes    Int
+  width            Int?
+  height           Int?
+  aspectRatio      Float?
+  uploadedAt       DateTime @default(now())
+
+  categories           String[] @default([])
+  detectedObjects      String[] @default([])
+  detectedPeopleCount  Int?
+  detectedColors       String[] @default([])
+  suggestedContentType String?
+
+  wedding           Wedding            @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  analysis          PhotoAnalysis?
+  contentPostImages ContentPostImage[]
+
+  @@index([weddingId])
+  @@index([weddingId, uploadedAt])
+}
+
+model PhotoAnalysis {
+  id      String @id @default(cuid())
+  photoId String @unique
+
+  sharpnessScore  Float
+  exposureScore   Float
+  noiseScore      Float
+  focusScore      Float
+  resolutionScore Float
+  lightingScore   Float
+  motionBlurScore Float
+  technicalScore  Float // aggregate 1-10
+
+  framingScore          Float
+  balanceScore          Float
+  negativeSpaceScore    Float
+  subjectPlacementScore Float
+  visualHierarchyScore  Float
+  architecturalScore    Float
+  compositionScore      Float // aggregate 1-10
+
+  emotionalImpactScore  Float
+  editorialFeelingScore Float
+  storytellingScore     Float
+  uniquenessScore       Float
+  editorialScore        Float // aggregate 1-10
+
+  brandFitScore Float // 1-10
+
+  totalScore    Float // weighted aggregate 1-10
+  verdict       CurationVerdict @default(PENDING)
+  verdictReason String?
+
+  provider   String // "openai" | "demo-mode"
+  analyzedAt DateTime @default(now())
+
+  photo Photo @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@index([verdict])
+  @@index([totalScore])
+}
+
+// ---------------------------------------------------------------------------
+// Competitor intelligence (manual reference uploads only — no scraping)
+// ---------------------------------------------------------------------------
+
+enum CompetitorAccountType {
+  PLANNER
+  STYLIST
+  PHOTOGRAPHER
+  VENUE
+  DECORATOR
+  FLORIST
+  OTHER
+}
+
+enum CompetitorPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model Competitor {
+  id             String                @id @default(cuid())
+  organizationId String
+  accountName    String
+  instagramUrl   String?
+  accountType    CompetitorAccountType @default(OTHER)
+  notes          String?
+  priority       CompetitorPriority    @default(MEDIUM)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  posts        CompetitorPost[]
+
+  @@index([organizationId])
+}
+
+enum CompetitorContentFormat {
+  SINGLE_IMAGE
+  CAROUSEL
+  REEL
+  STORY
+}
+
+model CompetitorPost {
+  id             String                   @id @default(cuid())
+  competitorId   String
+  // manually supplied reference material — a screenshot upload, a URL, or a
+  // pasted CSV row. We never fetch this automatically.
+  sourceType     String // "screenshot" | "url" | "csv_row" | "manual_note"
+  sourceUrl      String?
+  screenshotKey  String?
+  caption        String?
+  postedAt       DateTime?
+  format         CompetitorContentFormat?
+  categories     String[]                 @default([])
+  dominantColors String[]                 @default([])
+  hashtags       String[]                 @default([])
+  collaborators  String[]                 @default([])
+  ctaPattern     String?
+  notes          String?
+  createdAt      DateTime                 @default(now())
+
+  competitor Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@index([competitorId])
+}
+
+// ---------------------------------------------------------------------------
+// Content pipeline
+// ---------------------------------------------------------------------------
+
+enum ContentFormat {
+  SINGLE_IMAGE
+  CAROUSEL
+  REEL
+  STORY
+}
+
+model ContentIdea {
+  id        String        @id @default(cuid())
+  weddingId String
+  title     String
+  concept   String
+  hook      String?
+  format    ContentFormat @default(CAROUSEL)
+  rationale String?
+  photoIds  String[]      @default([])
+  createdAt DateTime      @default(now())
+
+  wedding Wedding       @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  posts   ContentPost[]
+
+  @@index([weddingId])
+}
+
+enum ContentStatus {
+  IDEA
+  DRAFT
+  READY_FOR_APPROVAL
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+}
+
+enum CaptionTone {
+  LUXURY_EDITORIAL
+  EMOTIONAL
+  MINIMAL
+  STORYTELLING
+  FASHION_EDITORIAL
+  SEO
+  PROFESSIONAL
+  PLAYFUL
+}
+
+model ContentPost {
+  id            String  @id @default(cuid())
+  weddingId     String
+  contentIdeaId String?
+
+  title        String?
+  hook         String?
+  caption      String?
+  shortCaption String?
+  cta          String?
+  seoKeywords  String[]      @default([])
+  hashtags     String[]      @default([])
+  tone         CaptionTone   @default(LUXURY_EDITORIAL)
+  format       ContentFormat @default(CAROUSEL)
+
+  collaborators String[]      @default([]) // vendor ids
+  status        ContentStatus @default(IDEA)
+
+  recommendedDate DateTime?
+  recommendedTime String? // "19:30"
+  timeConfidence  Float?
+  timeReason      String?
+
+  scheduledFor DateTime?
+  publishedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  wedding     Wedding            @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  contentIdea ContentIdea?       @relation(fields: [contentIdeaId], references: [id])
+  images      ContentPostImage[]
+  analytics   Analytics[]
+
+  @@index([weddingId])
+  @@index([status])
+  @@index([scheduledFor])
+}
+
+model ContentPostImage {
+  id            String @id @default(cuid())
+  contentPostId String
+  photoId       String
+  order         Int    @default(0)
+
+  contentPost ContentPost @relation(fields: [contentPostId], references: [id], onDelete: Cascade)
+  photo       Photo       @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@unique([contentPostId, photoId])
+  @@index([contentPostId])
+}
+
+model HashtagSet {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  hashtags       String[] @default([])
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Analytics (populated once a social platform integration exists; MVP allows
+// manual entry so the schema and UI are ready ahead of API access)
+// ---------------------------------------------------------------------------
+
+model Analytics {
+  id             String  @id @default(cuid())
+  organizationId String
+  contentPostId  String?
+
+  reach           Int?
+  impressions     Int?
+  likes           Int?
+  comments        Int?
+  shares          Int?
+  saves           Int?
+  profileVisits   Int?
+  followersGained Int?
+  engagementRate  Float?
+
+  recordedAt DateTime @default(now())
+  source     String   @default("manual") // "manual" | "instagram_api" etc.
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contentPost  ContentPost? @relation(fields: [contentPostId], references: [id])
+
+  @@index([organizationId])
+  @@index([contentPostId])
+}
+
+// ---------------------------------------------------------------------------
+// AI Marketing Director — logged Q&A / recommendations
+// ---------------------------------------------------------------------------
+
+model AIRecommendation {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?
+  kind           String // "chat" | "opportunity" | "weekly_plan" etc.
+  prompt         String?
+  response       String
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@index([createdAt])
+}

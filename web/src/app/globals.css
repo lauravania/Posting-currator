@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --wmi-ivory: #faf7f2;
+  --wmi-paper: #f3efe7;
+  --wmi-ink: #1c1a17;
+  --wmi-ink-soft: #4a463f;
+  --wmi-hairline: #e2dbcd;
+  --wmi-gold: #a8894f;
+  --wmi-gold-soft: #d8c39f;
+  --wmi-keep: #4b6350;
+  --wmi-maybe: #a8894f;
+  --wmi-reject: #9c4f43;
+}
+
+* {
+  border-color: var(--wmi-hairline);
+}
+
+html,
+body {
+  background: var(--wmi-ivory);
+  color: var(--wmi-ink);
+}
+
+body {
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+.font-sans-editorial {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.tracking-editorial {
+  letter-spacing: 0.14em;
+}
+
+.eyebrow {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.68rem;
+  color: var(--wmi-ink-soft);
+}
+
+::selection {
+  background: var(--wmi-gold-soft);
+}
+
+input,
+textarea,
+select {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--wmi-hairline);
+  border-radius: 3px;
+}
