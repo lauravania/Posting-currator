@@ -1,0 +1,16 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Downloaded data (photos shouldn't live in git)
+data/raw_photos/*
+!data/raw_photos/.gitkeep
+
+# OS
+.DS_Store
