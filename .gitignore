@@ -1,0 +1,16 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Downloaded photo data (keep the folder, ignore its contents)
+data/raw_photos/*
+!data/raw_photos/.gitkeep
+
+# OS
+.DS_Store
