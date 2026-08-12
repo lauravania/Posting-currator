@@ -1,0 +1,16 @@
+# Secrets
+.env
+
+# Downloaded photos (large binary data — don't commit)
+data/raw_photos/*
+!data/raw_photos/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
