@@ -1,0 +1,15 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Downloaded photo data (keep the directory, ignore its contents)
+data/raw_photos/*
+!data/raw_photos/.gitkeep
+
+# OS cruft
+.DS_Store
