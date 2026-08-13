@@ -42,7 +42,7 @@ export default async function CurationOverviewPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Stat label="Keep" value={counts.KEEP ?? 0} />
         <Stat label="Maybe" value={counts.MAYBE ?? 0} />
-        <Stat label="Reject" value={counts.REJECT ?? 0} />
+        <Stat label="Skip" value={counts.REJECT ?? 0} />
         <Stat label="Weddings with pending analysis" value={weddingsWithPending.length} />
       </div>
 

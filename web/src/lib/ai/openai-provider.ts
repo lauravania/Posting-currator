@@ -41,14 +41,24 @@ export async function scorePhotoOpenAI(input: PhotoScoreInput): Promise<PhotoSco
   const mime = input.absolutePath.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
 
   const brand = input.brand;
-  const systemPrompt = `You are a photography editor and creative director for a luxury wedding brand. Score the submitted photograph honestly and specifically. Do not simply reward technical perfection — a technically imperfect photo can still score highly on emotional/editorial value if it earns it. Return ONLY a JSON object matching the requested schema, with every score as a number from 0 to 10.`;
+  const wedding = input.wedding;
+  const systemPrompt = `You are a photography editor and creative director for a luxury wedding brand. Score the submitted photograph honestly and specifically. Do not simply reward technical perfection — a technically imperfect photo can still score highly on emotional/editorial value if it earns it. Weigh brand fit against this SPECIFIC wedding's own concept, color palette, and story first — the org's general brand style is secondary context, not a replacement for it. Return ONLY a JSON object matching the requested schema, with every score as a number from 0 to 10.`;
 
-  const userPrompt = `Brand context:
+  const userPrompt = `Brand context (general studio voice):
 Name: ${brand.name}
 Positioning: ${brand.positioning ?? "n/a"}
 Visual style: ${brand.visualStyle.join(", ") || "n/a"}
 Preferred colors: ${brand.preferredColors.join(", ") || "n/a"}
 Words to avoid: ${brand.wordsToAvoid.join(", ") || "n/a"}
+
+This wedding's specific creative direction (weigh this most heavily for brand fit):
+Couple: ${wedding.coupleName}
+Concept: ${wedding.concept ?? "n/a"}
+Couple story: ${wedding.coupleStory ?? "n/a"}
+Color palette: ${wedding.colorPalette.join(", ") || "n/a"}
+Design keywords: ${wedding.designKeywords.join(", ") || "n/a"}
+Location: ${wedding.location ?? "n/a"}
+Vendor team: ${wedding.vendors.map((v) => `${v.name} (${v.category})`).join(", ") || "n/a"}
 
 Score this photograph on each of the following (0-10), plus classify it.
 Return JSON:
@@ -64,7 +74,7 @@ Return JSON:
   "detectedObjects": string[] (key visible subjects/objects),
   "detectedPeopleCount": number | null,
   "suggestedContentType": string,
-  "verdictReason": string (1-2 sentences, specific to this photo)
+  "verdictReason": string (1-2 sentences, specific to this photo — reference this wedding's concept/palette/story where it genuinely affected the score)
 }`;
 
   const completion = await openai.chat.completions.create({

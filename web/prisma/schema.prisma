@@ -44,13 +44,14 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members         OrganizationMember[]
-  brand           Brand?
-  weddings        Wedding[]
-  competitors     Competitor[]
-  hashtagSets     HashtagSet[]
-  analytics       Analytics[]
-  recommendations AIRecommendation[]
+  members          OrganizationMember[]
+  brand            Brand?
+  weddings         Wedding[]
+  competitors      Competitor[]
+  hashtagSets      HashtagSet[]
+  analytics        Analytics[]
+  recommendations  AIRecommendation[]
+  cloudConnections CloudConnection[]
 }
 
 model OrganizationMember {
@@ -121,11 +122,12 @@ model Wedding {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   photos       Photo[]
   vendors      Vendor[]
   contentIdeas ContentIdea[]
   contentPosts ContentPost[]
+  importJobs   PhotoImportJob[]
 
   @@index([organizationId])
 }
@@ -151,6 +153,70 @@ model Vendor {
   updatedAt              DateTime           @updatedAt
 
   wedding Wedding @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+
+  @@index([weddingId])
+}
+
+// ---------------------------------------------------------------------------
+// Cloud photo import (Google Drive / Dropbox) — §"cloud photo import workflow"
+// ---------------------------------------------------------------------------
+
+enum CloudProvider {
+  GOOGLE_DRIVE
+  DROPBOX
+}
+
+// One connection per org per provider. Tokens are encrypted at rest (see
+// src/lib/crypto.ts) — this table is never read from client code.
+model CloudConnection {
+  id              String        @id @default(cuid())
+  organizationId  String
+  provider        CloudProvider
+  accountLabel    String? // the connected email/account name, for display only
+  accessTokenEnc  String
+  refreshTokenEnc String?
+  expiresAt       DateTime?
+  scope           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, provider])
+}
+
+enum ImportSource {
+  DEVICE
+  GOOGLE_DRIVE
+  DROPBOX
+}
+
+enum ImportJobStatus {
+  PENDING
+  IMPORTING
+  ANALYZING
+  COMPLETED
+  FAILED
+}
+
+// Tracks one import batch (device upload finalize, or a cloud folder
+// import) end-to-end so the UI can poll a single resource through
+// Importing -> Analyzing -> Completed, per the auto-curation requirement.
+model PhotoImportJob {
+  id            String          @id @default(cuid())
+  weddingId     String
+  source        ImportSource
+  status        ImportJobStatus @default(PENDING)
+  sourceLabel   String? // e.g. the picked Drive/Dropbox folder name
+  totalFiles    Int             @default(0)
+  importedFiles Int             @default(0)
+  analyzedFiles Int             @default(0)
+  errorMessage  String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  wedding Wedding @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  photos  Photo[]
 
   @@index([weddingId])
 }
@@ -185,12 +251,17 @@ model Photo {
   detectedColors       String[] @default([])
   suggestedContentType String?
 
+  importSource ImportSource?
+  importJobId  String?
+
   wedding           Wedding            @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  importJob         PhotoImportJob?    @relation(fields: [importJobId], references: [id], onDelete: SetNull)
   analysis          PhotoAnalysis?
   contentPostImages ContentPostImage[]
 
   @@index([weddingId])
   @@index([weddingId, uploadedAt])
+  @@index([importJobId])
 }
 
 model PhotoAnalysis {

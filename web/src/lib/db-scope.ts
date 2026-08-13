@@ -50,3 +50,12 @@ export async function requireContentPostInOrg(contentPostId: string, organizatio
   if (!post) throw new NotFoundOrForbiddenError("ContentPost");
   return post;
 }
+
+export async function requireImportJobInOrg(jobId: string, organizationId: string) {
+  const job = await prisma.photoImportJob.findFirst({
+    where: { id: jobId, wedding: { organizationId } },
+    include: { wedding: true },
+  });
+  if (!job) throw new NotFoundOrForbiddenError("PhotoImportJob");
+  return job;
+}

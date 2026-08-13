@@ -5,7 +5,7 @@ import { getStorageAdapter } from "@/lib/storage";
 import { PhotoCard, type PhotoCardData } from "@/components/photos/photo-card";
 import { RunCurationButton } from "@/components/photos/run-curation-button";
 import { TopPicks, type TopPickData } from "@/components/curation/top-picks";
-import { isDemoMode } from "@/lib/ai";
+import { isDemoMode, VERDICT_DISPLAY_LABEL, type CurationVerdict } from "@/lib/ai";
 
 export default async function WeddingCurationPage({ params }: { params: { id: string } }) {
   const session = await requireSession();
@@ -71,7 +71,7 @@ export default async function WeddingCurationPage({ params }: { params: { id: st
           {analyzed.length > 0 && (
             <p className="font-sans text-sm text-ink-soft mt-2">
               {keep.length} keeper{keep.length === 1 ? "" : "s"} · {maybe.length} maybe{maybe.length === 1 ? "" : "s"} ·{" "}
-              {reject.length} rejected
+              {reject.length} skipped
               {isDemoMode() && " · Demo Mode"}
             </p>
           )}
@@ -94,14 +94,13 @@ export default async function WeddingCurationPage({ params }: { params: { id: st
         </section>
       )}
 
-      {(["KEEP", "MAYBE", "REJECT"] as const).map((verdict) => {
+      {(["KEEP", "MAYBE", "REJECT"] as CurationVerdict[]).map((verdict) => {
         const group = verdict === "KEEP" ? keep : verdict === "MAYBE" ? maybe : reject;
         if (group.length === 0) return null;
         return (
           <section key={verdict}>
             <p className="eyebrow mb-6">
-              {verdict[0]}
-              {verdict.slice(1).toLowerCase()} board ({group.length})
+              {VERDICT_DISPLAY_LABEL[verdict]} board ({group.length})
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-10">
               {group.map((p) => (

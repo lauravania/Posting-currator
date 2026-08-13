@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { VERDICT_DISPLAY_LABEL } from "@/lib/ai/types";
 
 export type TopPickData = {
   id: string;
@@ -16,9 +17,9 @@ export type TopPickData = {
 };
 
 const VERDICT_LABEL: Record<string, string> = {
-  KEEP: "Keep",
-  MAYBE: "Maybe",
-  REJECT: "Reject",
+  KEEP: VERDICT_DISPLAY_LABEL.KEEP,
+  MAYBE: VERDICT_DISPLAY_LABEL.MAYBE,
+  REJECT: VERDICT_DISPLAY_LABEL.REJECT,
 };
 
 /**

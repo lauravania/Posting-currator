@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getStorageAdapter } from "@/lib/storage";
-import { analyzePhoto, type BrandProfile } from "@/lib/ai";
+import { analyzePhoto, type BrandProfile, type WeddingContext } from "@/lib/ai";
 
 export function toBrandProfile(brand: {
   name: string;
@@ -27,7 +27,9 @@ export function toBrandProfile(brand: {
 export async function analyzeAndSavePhoto(photoId: string) {
   const photo = await prisma.photo.findUniqueOrThrow({
     where: { id: photoId },
-    include: { wedding: { include: { organization: { include: { brand: true } } } } },
+    include: {
+      wedding: { include: { organization: { include: { brand: true } }, vendors: true } },
+    },
   });
 
   const brand = photo.wedding.organization.brand;
@@ -48,6 +50,19 @@ export async function analyzeAndSavePhoto(photoId: string) {
         positioning: null,
       };
 
+  // The specific wedding's own concept/palette/story/vendors — preserved
+  // as first-class context for scoring, not just the org's general brand
+  // voice (see WeddingContext in lib/ai/types.ts).
+  const weddingContext: WeddingContext = {
+    coupleName: photo.wedding.coupleName,
+    concept: photo.wedding.concept,
+    coupleStory: photo.wedding.coupleStory,
+    colorPalette: photo.wedding.colorPalette,
+    designKeywords: photo.wedding.designKeywords,
+    location: photo.wedding.location,
+    vendors: photo.wedding.vendors.map((v) => ({ name: v.name, category: v.category })),
+  };
+
   const storage = getStorageAdapter();
   const absolutePath = await storage.resolveReadPath(photo.storageKey);
 
@@ -58,6 +73,7 @@ export async function analyzeAndSavePhoto(photoId: string) {
     height: photo.height,
     fileSizeBytes: photo.fileSizeBytes,
     brand: brandProfile,
+    wedding: weddingContext,
   });
 
   await prisma.$transaction([

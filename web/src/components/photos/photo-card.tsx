@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { VerdictBadge } from "./verdict-badge";
+import { VERDICT_DISPLAY_LABEL } from "@/lib/ai/types";
 
 export type PhotoCardData = {
   id: string;
@@ -136,7 +137,7 @@ export function PhotoCard({ photo, selectable, selected, onToggleSelect }: {
                     : "border-ivory/40 text-ivory/80 hover:border-ivory"
                 }`}
               >
-                {v[0]}
+                {VERDICT_DISPLAY_LABEL[v][0]}
               </button>
             ))}
             <button onClick={remove} disabled={busy} className="text-[10px] text-ivory/70 hover:text-reject px-2">

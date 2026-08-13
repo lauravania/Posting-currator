@@ -42,6 +42,15 @@ export type PhotoCategory = (typeof PHOTO_CATEGORIES)[number];
 
 export type CurationVerdict = "KEEP" | "MAYBE" | "REJECT";
 
+// Display-only label mapping — the DB enum stays KEEP/MAYBE/REJECT
+// (already threaded through migrations, queries, and the curation board),
+// but the product language is "Keep / Maybe / Skip".
+export const VERDICT_DISPLAY_LABEL: Record<CurationVerdict, string> = {
+  KEEP: "Keep",
+  MAYBE: "Maybe",
+  REJECT: "Skip",
+};
+
 export type PhotoScoreResult = {
   sharpnessScore: number;
   exposureScore: number;
@@ -80,6 +89,21 @@ export type PhotoScoreResult = {
   provider: "openai" | "demo-mode";
 };
 
+// The specific wedding's own creative direction — kept distinct from
+// BrandProfile (the org's general voice/style) because a single studio's
+// brand covers many weddings, each with its own concept/palette/story that
+// should weigh at least as heavily when scoring brand fit and writing
+// verdict rationale (see lib/curation.ts, demo-provider.ts, openai-provider.ts).
+export type WeddingContext = {
+  coupleName: string;
+  concept: string | null;
+  coupleStory: string | null;
+  colorPalette: string[];
+  designKeywords: string[];
+  location: string | null;
+  vendors: { name: string; category: string }[];
+};
+
 export type PhotoScoreInput = {
   absolutePath: string;
   originalFilename: string;
@@ -87,6 +111,7 @@ export type PhotoScoreInput = {
   height: number | null;
   fileSizeBytes: number;
   brand: BrandProfile;
+  wedding: WeddingContext;
 };
 
 export type CaptionTone =

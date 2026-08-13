@@ -7,6 +7,7 @@ import {
   type CaptionRequest,
   type CaptionResult,
   type ContentOpportunity,
+  type WeddingContext,
 } from "./types";
 
 /**
@@ -127,13 +128,23 @@ function deriveEditorial(technicalScore: number, compositionScore: number, metri
   return { emotionalImpactScore, editorialFeelingScore, storytellingScore, uniquenessScore, editorialScore };
 }
 
-function deriveBrandFit(metrics: ImageMetrics, preferredColors: string[]) {
-  if (preferredColors.length === 0) return 6;
-  const brandRgbs = preferredColors.map(parseColorToRgb).filter(Boolean) as [number, number, number][];
-  if (brandRgbs.length === 0) return 6;
-  const distances = brandRgbs.map((c) => colorDistance(metrics.meanColor, c));
-  const minDist = Math.min(...distances);
+function colorMatchScore(metrics: ImageMetrics, colors: string[]): number | null {
+  const rgbs = colors.map(parseColorToRgb).filter(Boolean) as [number, number, number][];
+  if (rgbs.length === 0) return null;
+  const minDist = Math.min(...rgbs.map((c) => colorDistance(metrics.meanColor, c)));
   return scoreFromRange(441 - minDist, 0, 441); // 441 ~= max possible RGB distance
+}
+
+// This specific wedding's palette is more specific than the org's general
+// brand palette, so it's weighted higher when both are available — see
+// WeddingContext in types.ts for why wedding-level context takes priority.
+function deriveBrandFit(metrics: ImageMetrics, brandColors: string[], weddingColors: string[]) {
+  const weddingScore = colorMatchScore(metrics, weddingColors);
+  const brandScore = colorMatchScore(metrics, brandColors);
+  if (weddingScore != null && brandScore != null) return clamp10(weddingScore * 0.65 + brandScore * 0.35);
+  if (weddingScore != null) return weddingScore;
+  if (brandScore != null) return brandScore;
+  return 6;
 }
 
 function deriveCategories(metrics: ImageMetrics, filename: string, editorialScore: number): PhotoCategory[] {
@@ -191,25 +202,49 @@ function suggestContentType(metrics: ImageMetrics): string {
   return "Feed post";
 }
 
-function verdictFrom(totalScore: number, technicalScore: number, editorialScore: number): { verdict: "KEEP" | "MAYBE" | "REJECT"; reason: string } {
+function contextSentence(brandFitScore: number, wedding: WeddingContext): string | null {
+  if (brandFitScore >= 7 && wedding.colorPalette.length > 0) {
+    return `Palette lines up with ${wedding.coupleName}'s ${wedding.colorPalette.slice(0, 3).join("/")} direction.`;
+  }
+  if (brandFitScore < 5 && wedding.colorPalette.length > 0) {
+    return `Color story reads further from ${wedding.coupleName}'s planned ${wedding.colorPalette.slice(0, 3).join("/")} palette.`;
+  }
+  if (wedding.concept) {
+    return `Considered against this wedding's concept: "${wedding.concept}".`;
+  }
+  return null;
+}
+
+function verdictFrom(
+  totalScore: number,
+  technicalScore: number,
+  editorialScore: number,
+  brandFitScore: number,
+  wedding: WeddingContext
+): { verdict: "KEEP" | "MAYBE" | "REJECT"; reason: string } {
+  const context = contextSentence(brandFitScore, wedding);
+  const suffix = context ? ` ${context}` : "";
+
   if (totalScore >= 7.3) {
     return {
       verdict: "KEEP",
       reason:
-        editorialScore >= technicalScore
+        (editorialScore >= technicalScore
           ? "Strong editorial and brand-fit signal carries this photo even where technical polish is merely solid."
-          : "Technically clean with solid composition — a safe, brand-consistent keeper.",
+          : "Technically clean with solid composition — a safe, brand-consistent keeper.") + suffix,
     };
   }
   if (totalScore >= 5.2) {
     return {
       verdict: "MAYBE",
-      reason: "Usable, but doesn't clear the bar on enough dimensions to be a clear pick — worth a second look for context (behind-the-scenes, Stories) rather than the primary feed.",
+      reason:
+        "Usable, but doesn't clear the bar on enough dimensions to be a clear pick — worth a second look for context (behind-the-scenes, Stories) rather than the primary feed." +
+        suffix,
     };
   }
   return {
     verdict: "REJECT",
-    reason: "Falls short on technical quality and composition without enough editorial value to compensate.",
+    reason: "Falls short on technical quality and composition without enough editorial value to compensate." + suffix,
   };
 }
 
@@ -218,12 +253,12 @@ export async function scorePhotoDemoMode(input: PhotoScoreInput): Promise<PhotoS
   const technical = deriveTechnical(metrics, input.fileSizeBytes);
   const composition = deriveComposition(metrics);
   const editorial = deriveEditorial(technical.technicalScore, composition.compositionScore, metrics);
-  const brandFitScore = deriveBrandFit(metrics, input.brand.preferredColors);
+  const brandFitScore = deriveBrandFit(metrics, input.brand.preferredColors, input.wedding.colorPalette);
 
   const totalScore = clamp10(
     technical.technicalScore * 0.25 + composition.compositionScore * 0.25 + editorial.editorialScore * 0.3 + brandFitScore * 0.2
   );
-  const { verdict, reason } = verdictFrom(totalScore, technical.technicalScore, editorial.editorialScore);
+  const { verdict, reason } = verdictFrom(totalScore, technical.technicalScore, editorial.editorialScore, brandFitScore, input.wedding);
 
   const categories = deriveCategories(metrics, input.originalFilename, editorial.editorialScore);
   const detectedColors = Array.from(new Set(metrics.samplePalette.map(nearestColorName))).slice(0, 5);
