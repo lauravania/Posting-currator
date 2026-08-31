@@ -2,7 +2,7 @@ import { requireSession } from "@/lib/session";
 import { requireWeddingInOrg } from "@/lib/db-scope";
 import { prisma } from "@/lib/prisma";
 import { getStorageAdapter } from "@/lib/storage";
-import { isCloudProviderConfigured } from "@/lib/cloud";
+import { isCloudProviderConfigured, isLinkImportAvailable } from "@/lib/cloud";
 import { SectionHeading } from "@/components/ui/stat";
 import { AddPhotosTabs } from "@/components/photos/add-photos-tabs";
 import { PhotoCard, type PhotoCardData } from "@/components/photos/photo-card";
@@ -33,11 +33,13 @@ export default async function WeddingPhotosPage({
     configured: isCloudProviderConfigured("GOOGLE_DRIVE"),
     connected: Boolean(byProvider.GOOGLE_DRIVE),
     accountLabel: byProvider.GOOGLE_DRIVE?.accountLabel ?? null,
+    linkImportAvailable: isLinkImportAvailable("GOOGLE_DRIVE"),
   };
   const dropboxStatus = {
     configured: isCloudProviderConfigured("DROPBOX"),
     connected: Boolean(byProvider.DROPBOX),
     accountLabel: byProvider.DROPBOX?.accountLabel ?? null,
+    linkImportAvailable: isLinkImportAvailable("DROPBOX"),
   };
 
   const pendingCount = photos.filter((p) => !p.analysis).length;

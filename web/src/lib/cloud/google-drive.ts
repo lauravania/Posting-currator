@@ -161,3 +161,73 @@ export const googleDriveAdapter: CloudProviderAdapter = {
     return { buffer, mimeType: image.mimeType, filename: image.name };
   },
 };
+
+// ---------------------------------------------------------------------------
+// "Drop a link" import — no OAuth consent screen required. Works for a
+// folder shared as "Anyone with the link", authenticated with a plain
+// Google API key (GOOGLE_DRIVE_API_KEY) rather than a per-user OAuth token.
+// If the org already has a Google Drive OAuth connection, callers should
+// prefer that instead (see resolveGoogleDriveAuth in lib/cloud/index.ts) —
+// it also works for a link the connected account can view, OAuth'd or not.
+// ---------------------------------------------------------------------------
+
+export function isGoogleDriveApiKeyConfigured(): boolean {
+  return Boolean(process.env.GOOGLE_DRIVE_API_KEY);
+}
+
+/**
+ * Accepts any of Google Drive's folder link shapes and returns the bare
+ * folder ID, or null if the string doesn't look like a Drive folder link
+ * at all.
+ *   https://drive.google.com/drive/folders/<id>?usp=sharing
+ *   https://drive.google.com/drive/u/0/folders/<id>
+ *   https://drive.google.com/open?id=<id>
+ *   a bare folder ID pasted directly
+ */
+export function parseGoogleDriveFolderLink(input: string): string | null {
+  const trimmed = input.trim();
+  const folderMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (folderMatch) return folderMatch[1];
+  const idParamMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idParamMatch) return idParamMatch[1];
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(trimmed)) return trimmed; // looks like a bare ID
+  return null;
+}
+
+async function driveFetchWithKey(path: string, apiKey: string, params?: Record<string, string>) {
+  const url = new URL(path);
+  url.searchParams.set("key", apiKey);
+  if (params) for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    const hint =
+      res.status === 403 || res.status === 404
+        ? " (make sure the folder is shared as \"Anyone with the link\")"
+        : "";
+    throw new Error(`Google Drive API error (${res.status})${hint}: ${body.slice(0, 300)}`);
+  }
+  return res;
+}
+
+export async function getPublicFolderName(apiKey: string, folderId: string): Promise<string> {
+  const res = await driveFetchWithKey(`${DRIVE_FILES_URL}/${folderId}`, apiKey, { fields: "name,mimeType" });
+  const json = (await res.json()) as { name: string; mimeType: string };
+  if (json.mimeType !== "application/vnd.google-apps.folder") {
+    throw new Error("That link doesn't point to a Google Drive folder.");
+  }
+  return json.name;
+}
+
+export async function listImagesInPublicFolder(apiKey: string, folderId: string): Promise<CloudImage[]> {
+  const q = `mimeType contains 'image/' and trashed=false and '${folderId}' in parents`;
+  const res = await driveFetchWithKey(DRIVE_FILES_URL, apiKey, { q, fields: "files(id,name,mimeType,size)", pageSize: "1000" });
+  const json = (await res.json()) as { files: { id: string; name: string; mimeType: string; size?: string }[] };
+  return json.files.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, sizeBytes: f.size ? Number(f.size) : null }));
+}
+
+export async function downloadPublicImage(apiKey: string, image: CloudImage): Promise<CloudDownload> {
+  const res = await driveFetchWithKey(`${DRIVE_FILES_URL}/${image.id}`, apiKey, { alt: "media" });
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return { buffer, mimeType: image.mimeType, filename: image.name };
+}

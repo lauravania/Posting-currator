@@ -4,7 +4,18 @@ import { getStorageAdapter } from "@/lib/storage";
 import { randomId, sanitizeFilename } from "@/lib/id";
 import { ALLOWED_IMAGE_TYPES, MAX_UPLOAD_BYTES } from "@/lib/validation";
 import { analyzeAndSavePhoto } from "@/lib/curation";
-import { getValidAccessToken, getCloudAdapter, type CloudImage } from "@/lib/cloud";
+import {
+  getValidAccessToken,
+  getCloudAdapter,
+  resolveGoogleDriveAuth,
+  resolveDropboxToken,
+  parseGoogleDriveFolderLink,
+  listGoogleDrivePublicFolderImages,
+  downloadGoogleDrivePublicImage,
+  listDropboxSharedLinkImages,
+  downloadDropboxSharedLinkFile,
+  type CloudImage,
+} from "@/lib/cloud";
 import type { ImportSource } from "@prisma/client";
 
 /**
@@ -128,6 +139,71 @@ export async function runCloudImportJob(jobId: string, provider: "GOOGLE_DRIVE" 
 
     await mapWithConcurrency(images, 3, async (image: CloudImage) => {
       const download = await adapter.downloadImage(accessToken, image);
+      await importPhotoBuffer({
+        weddingId: job.weddingId,
+        buffer: download.buffer,
+        filename: download.filename,
+        mimeType: download.mimeType || image.mimeType,
+        importSource: provider,
+        importJobId: jobId,
+      });
+    });
+
+    await runAnalysisPhase(jobId, job.weddingId);
+  } catch (err) {
+    await prisma.photoImportJob.update({
+      where: { id: jobId },
+      data: { status: "FAILED", errorMessage: err instanceof Error ? err.message : "Import failed." },
+    });
+  }
+}
+
+/**
+ * Runs a "drop a link" import job — the low-friction path that needs no
+ * OAuth consent screen. Prefers an existing OAuth connection for the org
+ * (works on private folders too); falls back to the simple, admin-level
+ * credential (GOOGLE_DRIVE_API_KEY / DROPBOX_REFRESH_TOKEN) which only
+ * reaches folders/links shared as "Anyone with the link". Same
+ * import-then-auto-analyze shape as runCloudImportJob.
+ */
+export async function runLinkImportJob(jobId: string, provider: "GOOGLE_DRIVE" | "DROPBOX", link: string) {
+  const job = await prisma.photoImportJob.findUniqueOrThrow({ where: { id: jobId }, include: { wedding: true } });
+  const organizationId = job.wedding.organizationId;
+
+  try {
+    let images: CloudImage[];
+    let downloadOne: (image: CloudImage) => Promise<{ buffer: Buffer; mimeType: string; filename: string }>;
+
+    if (provider === "GOOGLE_DRIVE") {
+      const folderId = parseGoogleDriveFolderLink(link);
+      if (!folderId) throw new Error("That doesn't look like a Google Drive folder link.");
+      const auth = await resolveGoogleDriveAuth(organizationId);
+      if (!auth) throw new Error("Google Drive isn't connected and no GOOGLE_DRIVE_API_KEY is configured for link import.");
+
+      if (auth.mode === "oauth") {
+        const adapter = getCloudAdapter("GOOGLE_DRIVE");
+        images = await adapter.listImagesInFolder(auth.accessToken, folderId);
+        downloadOne = (image) => adapter.downloadImage(auth.accessToken, image);
+      } else {
+        images = await listGoogleDrivePublicFolderImages(auth.apiKey, folderId);
+        downloadOne = (image) => downloadGoogleDrivePublicImage(auth.apiKey, image);
+      }
+    } else {
+      const accessToken = await resolveDropboxToken(organizationId);
+      if (!accessToken) throw new Error("Dropbox isn't connected and no DROPBOX_REFRESH_TOKEN is configured for link import.");
+      images = await listDropboxSharedLinkImages(accessToken, link);
+      downloadOne = (image) => downloadDropboxSharedLinkFile(accessToken, link, image);
+    }
+
+    await prisma.photoImportJob.update({ where: { id: jobId }, data: { totalFiles: images.length, status: "IMPORTING" } });
+
+    if (images.length === 0) {
+      await prisma.photoImportJob.update({ where: { id: jobId }, data: { status: "COMPLETED" } });
+      return;
+    }
+
+    await mapWithConcurrency(images, 3, async (image) => {
+      const download = await downloadOne(image);
       await importPhotoBuffer({
         weddingId: job.weddingId,
         buffer: download.buffer,

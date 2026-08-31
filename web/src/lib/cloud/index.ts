@@ -1,11 +1,23 @@
 import type { CloudProvider } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
-import { googleDriveAdapter } from "./google-drive";
-import { dropboxAdapter } from "./dropbox";
+import { googleDriveAdapter, isGoogleDriveApiKeyConfigured } from "./google-drive";
+import { dropboxAdapter, isDropboxLinkImportConfigured, getAppAccessToken as getDropboxAppAccessToken } from "./dropbox";
 import type { CloudProviderAdapter, CloudTokens } from "./types";
 
 export * from "./types";
+export {
+  parseGoogleDriveFolderLink,
+  getPublicFolderName as getGoogleDrivePublicFolderName,
+  listImagesInPublicFolder as listGoogleDrivePublicFolderImages,
+  downloadPublicImage as downloadGoogleDrivePublicImage,
+} from "./google-drive";
+export {
+  looksLikeDropboxLink,
+  getSharedLinkName as getDropboxSharedLinkName,
+  listImagesInSharedLink as listDropboxSharedLinkImages,
+  downloadSharedLinkFile as downloadDropboxSharedLinkFile,
+} from "./dropbox";
 
 const ADAPTERS: Record<CloudProvider, CloudProviderAdapter> = {
   GOOGLE_DRIVE: googleDriveAdapter,
@@ -111,4 +123,35 @@ export async function getValidAccessToken(organizationId: string, provider: Clou
   const tokens = await adapter.refreshAccessToken(refreshToken);
   await saveConnection(organizationId, provider, tokens);
   return tokens.accessToken;
+}
+
+// ---------------------------------------------------------------------------
+// "Drop a link" support — whether a provider's simple, no-OAuth-consent
+// credential is set (GOOGLE_DRIVE_API_KEY / DROPBOX_REFRESH_TOKEN), which
+// is enough to import from a link even for an org that never went through
+// the "Connect" flow. An existing OAuth connection still works too and is
+// preferred where present (see resolve*Auth below).
+// ---------------------------------------------------------------------------
+
+export function isLinkImportAvailable(provider: CloudProvider): boolean {
+  return provider === "GOOGLE_DRIVE" ? isGoogleDriveApiKeyConfigured() : isDropboxLinkImportConfigured();
+}
+
+export type GoogleDriveAuth = { mode: "oauth"; accessToken: string } | { mode: "apikey"; apiKey: string };
+
+/** Prefers an existing OAuth connection (works on private folders too); falls back to the plain API key (public/"anyone with the link" folders only). */
+export async function resolveGoogleDriveAuth(organizationId: string): Promise<GoogleDriveAuth | null> {
+  const oauthToken = await getValidAccessToken(organizationId, "GOOGLE_DRIVE");
+  if (oauthToken) return { mode: "oauth", accessToken: oauthToken };
+  const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
+  if (apiKey) return { mode: "apikey", apiKey };
+  return null;
+}
+
+/** Dropbox's shared-link APIs take a plain bearer token regardless of source, so OAuth and app-level tokens are interchangeable here. */
+export async function resolveDropboxToken(organizationId: string): Promise<string | null> {
+  const oauthToken = await getValidAccessToken(organizationId, "DROPBOX");
+  if (oauthToken) return oauthToken;
+  if (isDropboxLinkImportConfigured()) return getDropboxAppAccessToken();
+  return null;
 }

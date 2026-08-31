@@ -81,30 +81,42 @@ enforcement helpers used by every server action/route.
 ## Cloud photo import
 
 Photo Library's "Add photos" is three tabs — **this device**, **Google
-Drive**, **Dropbox** — instead of upload-only:
+Drive**, **Dropbox** — instead of upload-only. Each cloud tab offers two
+ways in:
 
-1. Connect Google Drive / Dropbox via their own OAuth consent screen (an
-   HMAC-signed `state` + an `httpOnly` nonce cookie guard the callback
-   against CSRF/replay — see `src/app/api/integrations/[provider]/`).
-2. Browse folders (server-driven list, not an embedded picker widget) and
-   click **Import this folder** — that single click is the trigger, no
-   follow-up confirmation step.
-3. The wedding's own **concept, color palette, design keywords, couple
+- **Drop a link** (the easy path — no OAuth consent screen). Paste a
+  folder link shared as "Anyone with the link" and import starts
+  immediately. Needs only `GOOGLE_DRIVE_API_KEY` (a plain API key — a
+  2-minute Google Cloud Console setup, no OAuth client) and/or
+  `DROPBOX_APP_KEY`/`DROPBOX_APP_SECRET`/`DROPBOX_REFRESH_TOKEN` (one
+  admin runs `scripts/get_dropbox_refresh_token.py`, already in this repo,
+  once). See `.env.example` for exact steps.
+- **Connect an account** — a real OAuth2 flow (their sign-in screen, never
+  a password typed into this app) that also reaches private folders, via
+  `GOOGLE_DRIVE_CLIENT_ID/SECRET` or a Dropbox OAuth app. An HMAC-signed
+  `state` + an `httpOnly` nonce cookie guard the callback against
+  CSRF/replay — see `src/app/api/integrations/[provider]/`. Once
+  connected, that same connection is what "drop a link" prefers, reaching
+  private folders too.
+
+Either way: selecting a folder (or hitting **Import** on a pasted link) is
+itself the trigger — no follow-up confirmation step — and:
+
+1. The wedding's own **concept, color palette, design keywords, couple
    story, and vendor team** are passed into the AI scoring as first-class
    context (`WeddingContext` in `src/lib/ai/types.ts`) — weighted *above*
    the org's general Brand voice, since it's more specific to this shoot.
    Demo Mode's brand-fit score blends the wedding's palette in directly;
    the OpenAI prompt is told explicitly to weigh this wedding's direction
    first.
-4. The UI polls the import job through **Importing → Analyzing →
+2. The UI polls the import job through **Importing → Analyzing →
    Completed** and lands on AI Curation automatically with Keep/Maybe/Skip
    already scored — device uploads now auto-trigger curation the same way
    (the old "Run AI Curation" button is still there as a manual fallback,
    e.g. for retrying photos that failed analysis).
 
-Without `GOOGLE_DRIVE_CLIENT_ID/SECRET` or `DROPBOX_APP_KEY/SECRET` set,
-those tabs plainly say "not configured" — see `.env.example` for how to
-register an OAuth app with each provider.
+With none of the above env vars set, a tab plainly says "not configured"
+rather than pretending to work.
 
 ## Product principle
 
@@ -180,11 +192,13 @@ implemented — there's no Instagram/Meta API connection in this MVP.
   queue (fine for an MVP-sized batch on a persistent server; move to
   BullMQ/Inngest for larger libraries or a serverless deployment, where the
   process can be frozen/killed after the response returns).
-- Cloud OAuth flows (Google Drive, Dropbox) are implemented for real but
-  untested against live provider apps in this environment — no Google
-  Cloud / Dropbox app was registered here. Code-reviewed against both
-  providers' current OAuth2 + API docs; verify end-to-end once real
-  `GOOGLE_DRIVE_CLIENT_ID/SECRET` / `DROPBOX_APP_KEY/SECRET` are set.
+- Cloud OAuth flows and the "drop a link" API-key/refresh-token paths
+  (Google Drive, Dropbox) are implemented for real but untested against
+  live provider credentials in this environment — none were available
+  here. Code-reviewed against both providers' current OAuth2 + API docs;
+  verify end-to-end once real `GOOGLE_DRIVE_API_KEY` (or
+  `GOOGLE_DRIVE_CLIENT_ID/SECRET`) / `DROPBOX_APP_KEY/SECRET` (+
+  `DROPBOX_REFRESH_TOKEN` for link import) are set.
 - No real Instagram/Meta Graph API integration — Analytics is manual-entry
   only, and the posting-time engine says so explicitly rather than
   guessing.

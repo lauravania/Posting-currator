@@ -184,3 +184,89 @@ export const dropboxAdapter: CloudProviderAdapter = {
     return { buffer, mimeType: image.mimeType, filename: image.name };
   },
 };
+
+// ---------------------------------------------------------------------------
+// "Drop a link" import — no per-user OAuth consent screen required. Uses
+// one admin-provisioned, app-level refresh token (DROPBOX_REFRESH_TOKEN,
+// generated once via scripts/get_dropbox_refresh_token.py) to fetch any
+// shared link pasted in, the same way scripts/1_fetch_photos.py already
+// does for its single fixed folder. If the org already has a Dropbox OAuth
+// connection, callers should prefer that instead (see
+// resolveDropboxAuth in lib/cloud/index.ts).
+// ---------------------------------------------------------------------------
+
+const SHARED_LINK_FILE_URL = "https://content.dropboxapi.com/2/sharing/get_shared_link_file";
+
+export function isDropboxLinkImportConfigured(): boolean {
+  return Boolean(clientId() && clientSecret() && process.env.DROPBOX_REFRESH_TOKEN);
+}
+
+export async function getAppAccessToken(): Promise<string> {
+  const id = clientId();
+  const secret = clientSecret();
+  const refreshToken = process.env.DROPBOX_REFRESH_TOKEN;
+  if (!id || !secret || !refreshToken) throw new Error("Dropbox link import is not configured.");
+
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ refresh_token: refreshToken, client_id: id, client_secret: secret, grant_type: "refresh_token" }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Dropbox app token refresh failed (${res.status}): ${body.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { access_token: string };
+  return json.access_token;
+}
+
+/** Normalizes a pasted Dropbox share link (strips a trailing dl=0/1 quirk is unnecessary — the API accepts the URL as-is). */
+export function looksLikeDropboxLink(input: string): boolean {
+  return /^https:\/\/(www\.)?dropbox\.com\/(scl\/fo|sh)\//.test(input.trim());
+}
+
+export async function getSharedLinkName(accessToken: string, link: string): Promise<string> {
+  const res = await fetch("https://api.dropboxapi.com/2/sharing/get_shared_link_metadata", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ url: link }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Could not open that Dropbox link (${res.status}): ${body.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { name: string };
+  return json.name;
+}
+
+export async function listImagesInSharedLink(accessToken: string, link: string): Promise<CloudImage[]> {
+  const res = await fetch(LIST_FOLDER_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ path: "", shared_link: { url: link }, recursive: false }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Dropbox API error (${res.status}): ${body.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { entries: DropboxEntry[] };
+  return json.entries
+    .filter((e) => e[".tag"] === "file" && IMAGE_EXTENSIONS.some((ext) => e.name.toLowerCase().endsWith(ext)))
+    .map((e) => {
+      const ext = IMAGE_EXTENSIONS.find((x) => e.name.toLowerCase().endsWith(x)) ?? ".jpg";
+      return { id: e.path_lower, name: e.name, mimeType: EXT_TO_MIME[ext], sizeBytes: e.size ?? null };
+    });
+}
+
+export async function downloadSharedLinkFile(accessToken: string, link: string, image: CloudImage): Promise<CloudDownload> {
+  const res = await fetch(SHARED_LINK_FILE_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Dropbox-API-Arg": JSON.stringify({ url: link, path: image.id }),
+    },
+  });
+  if (!res.ok) throw new Error(`Failed to download "${image.name}" from Dropbox (${res.status}).`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return { buffer, mimeType: image.mimeType, filename: image.name };
+}
