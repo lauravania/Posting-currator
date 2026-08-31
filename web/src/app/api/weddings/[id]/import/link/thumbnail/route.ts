@@ -41,6 +41,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const link = searchParams.get("link") || "";
   const imageId = searchParams.get("imageId") || "";
   const name = searchParams.get("name") || "photo.jpg";
+  const password = searchParams.get("password") || undefined;
 
   if (!provider || !link || !imageId) {
     return NextResponse.json({ error: "Missing parameters." }, { status: 400 });
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const mimeType = EXT_MIME[ext] ?? "image/jpeg";
 
   try {
-    const auth = await resolveLinkAuth(session.user.organizationId, provider, link);
+    const auth = await resolveLinkAuth(session.user.organizationId, provider, link, password);
     if (!auth) return NextResponse.json({ error: "Not connected." }, { status: 409 });
 
     const download = await downloadLinkImage(auth, link, { id: imageId, name, mimeType, sizeBytes: null });

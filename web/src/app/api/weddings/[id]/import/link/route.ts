@@ -11,6 +11,8 @@ import {
   parseGoogleDriveFolderLink,
   looksLikeDropboxLink,
   looksLikeUrl,
+  PasswordRequiredError,
+  IncorrectPasswordError,
 } from "@/lib/cloud";
 import { runLinkImportJob } from "@/lib/import-pipeline";
 import { rateLimit } from "@/lib/rate-limit";
@@ -22,7 +24,8 @@ export const runtime = "nodejs";
 // Albums, etc.) and import starts. Google Drive/Dropbox need
 // GOOGLE_DRIVE_API_KEY / DROPBOX_REFRESH_TOKEN (or an existing "Connect"
 // OAuth connection) configured; "other" links need no credential at all —
-// they're read directly off the public page.
+// they're read directly off the public page. Any of the three can be
+// password-protected — pass `password` and it's used to unlock the link.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await requireSession();
 
@@ -39,6 +42,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const body = await req.json().catch(() => ({}));
   const provider = parseLinkProviderParam(String(body.provider || ""));
   const link = String(body.link || "").trim();
+  const password = typeof body.password === "string" && body.password.length > 0 ? body.password : undefined;
   // From the browse-and-select preview: only import the photos the user
   // checked. Omit/empty to fall back to importing everything found.
   const imageIds: string[] | undefined = Array.isArray(body.imageIds)
@@ -59,7 +63,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const organizationId = session.user.organizationId;
-  const auth = await resolveLinkAuth(organizationId, provider, link);
+  let auth;
+  try {
+    auth = await resolveLinkAuth(organizationId, provider, link, password);
+  } catch (err) {
+    if (err instanceof PasswordRequiredError) {
+      return NextResponse.json({ error: "This link is password protected — enter the password and try again.", passwordRequired: true }, { status: 401 });
+    }
+    if (err instanceof IncorrectPasswordError) {
+      return NextResponse.json({ error: "That password wasn't accepted — check it and try again.", passwordRequired: true }, { status: 401 });
+    }
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Could not access that link." }, { status: 502 });
+  }
 
   if (!auth) {
     const providerName = linkProviderLabel(provider);
@@ -78,7 +93,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     data: { weddingId: params.id, source: importSourceForLinkProvider(provider), status: "PENDING", sourceLabel: link },
   });
 
-  void runLinkImportJob(job.id, provider, link, imageIds && imageIds.length > 0 ? imageIds : undefined);
+  void runLinkImportJob(job.id, provider, link, imageIds && imageIds.length > 0 ? imageIds : undefined, password);
 
   return NextResponse.json({ jobId: job.id });
 }

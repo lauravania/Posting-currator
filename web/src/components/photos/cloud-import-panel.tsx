@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/field";
 import { ImportProgress } from "./import-progress";
@@ -26,6 +26,7 @@ type PreviewState = {
   folderName: string;
   images: CloudImage[];
   link: string;
+  password: string;
 };
 
 const LINK_PLACEHOLDER: Record<ProviderSlug, string> = {
@@ -37,10 +38,18 @@ const LINK_PLACEHOLDER: Record<ProviderSlug, string> = {
 const LINK_HELP: Record<ProviderSlug, string> = {
   "google-drive":
     "Paste a Google Drive folder link shared as “Anyone with the link” to see what’s inside and choose which photos to import.",
-  dropbox:
-    "Paste a Dropbox shared link to see what’s inside and choose which photos to import.",
+  dropbox: "Paste a Dropbox shared link to see what’s inside and choose which photos to import.",
   other:
     "Paste a link to a gallery page — Pixieset, Apple Shared Albums, SmugMug, Zenfolio, or a photographer’s own site — and this reads the photos directly off the page. Best-effort: some galleries load their photos with JavaScript that a direct page fetch can’t see, in which case try Google Drive/Dropbox instead, or paste a direct link to one photo.",
+};
+
+// Google Drive folder links don't support a password — Drive's sharing
+// model is "anyone with the link" or account-based, no password gate.
+// Dropbox and "other" gallery links (Pixieset especially) commonly do.
+const SUPPORTS_PASSWORD: Record<ProviderSlug, boolean> = {
+  "google-drive": false,
+  dropbox: true,
+  other: true,
 };
 
 /**
@@ -50,7 +59,8 @@ const LINK_HELP: Record<ProviderSlug, string> = {
  * into the wedding and kicks off AI curation. No OAuth consent screen
  * needed as long as the provider's link-import credential is configured;
  * an existing "Connect" OAuth connection from an earlier session is used
- * automatically under the hood if present.
+ * automatically under the hood if present. If the link itself is
+ * password-protected, the password field below unlocks it.
  */
 export function CloudImportPanel({
   weddingId,
@@ -66,18 +76,23 @@ export function CloudImportPanel({
   status?: ProviderStatus;
 }) {
   const [link, setLink] = useState("");
+  const [password, setPassword] = useState("");
+  const [needsPassword, setNeedsPassword] = useState(false);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   const canPasteLink = provider === "other" || Boolean(status?.linkImportAvailable || status?.connected);
+  const supportsPassword = SUPPORTS_PASSWORD[provider];
 
-  function thumbnailSrc(image: CloudImage, previewLink: string): string {
+  function thumbnailSrc(image: CloudImage, previewLink: string, previewPassword: string): string {
     if (image.thumbnailUrl) return image.thumbnailUrl;
     const params = new URLSearchParams({ provider, link: previewLink, imageId: image.id, name: image.name });
+    if (previewPassword) params.set("password", previewPassword);
     return `/api/weddings/${weddingId}/import/link/thumbnail?${params.toString()}`;
   }
 
@@ -89,12 +104,19 @@ export function CloudImportPanel({
       const res = await fetch(`/api/weddings/${weddingId}/import/link/preview`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, link: link.trim() }),
+        body: JSON.stringify({ provider, link: link.trim(), password: password.trim() || undefined }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Could not open that link.");
-      const body = (await res.json()) as { folderName: string; images: CloudImage[] };
-      setPreview({ folderName: body.folderName, images: body.images, link: link.trim() });
-      setSelected(new Set(body.images.map((img) => img.id))); // default: everything selected
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (body.passwordRequired) {
+          setNeedsPassword(true);
+          setTimeout(() => passwordRef.current?.focus(), 0);
+        }
+        throw new Error(body.error || "Could not open that link.");
+      }
+      setNeedsPassword(false);
+      setPreview({ folderName: body.folderName, images: body.images, link: link.trim(), password: password.trim() });
+      setSelected(new Set((body.images as CloudImage[]).map((img) => img.id))); // default: everything selected
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open that link.");
     } finally {
@@ -110,7 +132,12 @@ export function CloudImportPanel({
       const res = await fetch(`/api/weddings/${weddingId}/import/link`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, link: preview.link, imageIds: Array.from(selected) }),
+        body: JSON.stringify({
+          provider,
+          link: preview.link,
+          imageIds: Array.from(selected),
+          password: preview.password || undefined,
+        }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Could not start import.");
       const body = (await res.json()) as { jobId: string };
@@ -135,6 +162,8 @@ export function CloudImportPanel({
     setPreview(null);
     setSelected(new Set());
     setLink("");
+    setPassword("");
+    setNeedsPassword(false);
     setError(null);
   }
 
@@ -197,7 +226,12 @@ export function CloudImportPanel({
                       className="absolute top-1.5 left-1.5 z-10 w-4 h-4"
                     />
                     {/* eslint-disable-next-line @next/next/no-img-element -- external, per-provider hosts; next/image domain allowlisting doesn't apply */}
-                    <img src={thumbnailSrc(img, preview.link)} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
+                    <img
+                      src={thumbnailSrc(img, preview.link, preview.password)}
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-cover"
+                      loading="lazy"
+                    />
                   </label>
                 );
               })}
@@ -215,7 +249,7 @@ export function CloudImportPanel({
     );
   }
 
-  // Step 1: paste a link and open it.
+  // Step 1: paste a link (and a password, if the gallery needs one) and open it.
   return (
     <div className="border border-hairline p-6">
       <p className="font-serif text-lg mb-2">{label}</p>
@@ -234,6 +268,22 @@ export function CloudImportPanel({
           {opening ? "Opening…" : "Open"}
         </Button>
       </div>
+      {supportsPassword && (
+        <div className="mt-2">
+          <Input
+            ref={passwordRef}
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") openLink();
+            }}
+            placeholder="Password (only if the link needs one)"
+            className={needsPassword ? "border-gold" : ""}
+          />
+          {needsPassword && <p className="font-sans text-[11px] text-ink-soft mt-1">This link is password protected — enter it above.</p>}
+        </div>
+      )}
       {error && <p className="font-sans text-xs text-reject mt-2">{error}</p>}
     </div>
   );

@@ -18,13 +18,13 @@ import {
   listImagesInSharedLink as listDropboxSharedLinkImages,
   downloadSharedLinkFile as downloadDropboxSharedLinkFile,
 } from "./dropbox";
-import { looksLikeUrl, listImagesFromGenericLink, downloadGenericImage } from "./generic-link";
+import { looksLikeUrl, resolveGenericLink, extractImagesFromHtml, downloadGenericImage } from "./generic-link";
 import type { CloudProviderAdapter, CloudTokens, CloudImage } from "./types";
 
 export * from "./types";
 export { parseGoogleDriveFolderLink, downloadPublicImage as downloadGoogleDrivePublicImage } from "./google-drive";
 export { looksLikeDropboxLink, downloadSharedLinkFile as downloadDropboxSharedLinkFile } from "./dropbox";
-export { looksLikeUrl } from "./generic-link";
+export { looksLikeUrl, PasswordRequiredError, IncorrectPasswordError } from "./generic-link";
 
 const ADAPTERS: Record<CloudProvider, CloudProviderAdapter> = {
   GOOGLE_DRIVE: googleDriveAdapter,
@@ -191,11 +191,26 @@ export async function resolveDropboxToken(organizationId: string): Promise<strin
 export type LinkAuth =
   | { provider: "GOOGLE_DRIVE"; mode: "oauth"; accessToken: string; folderId: string }
   | { provider: "GOOGLE_DRIVE"; mode: "apikey"; apiKey: string; folderId: string }
-  | { provider: "DROPBOX"; accessToken: string }
-  | { provider: "OTHER" };
+  | { provider: "DROPBOX"; accessToken: string; password?: string }
+  | { provider: "OTHER"; cookie: string | null; resolved: import("./generic-link").GenericResolved };
 
-/** Resolves whatever's needed to read a pasted link (OAuth connection first, then the simple key/token) — the one place both the preview and import routes figure out "can we actually reach this link, and how". */
-export async function resolveLinkAuth(organizationId: string, provider: LinkProvider, link: string): Promise<LinkAuth | null> {
+/**
+ * Resolves whatever's needed to read a pasted link (OAuth connection
+ * first, then the simple key/token) — the one place both the preview and
+ * import routes figure out "can we actually reach this link, and how".
+ *
+ * `password` only applies to Dropbox (passed straight through to its
+ * shared-link API) and OTHER (submitted to a detected password form —
+ * see resolveGenericLink). For OTHER this can throw PasswordRequiredError
+ * or IncorrectPasswordError, which callers should handle distinctly from
+ * a generic failure to open the link.
+ */
+export async function resolveLinkAuth(
+  organizationId: string,
+  provider: LinkProvider,
+  link: string,
+  password?: string
+): Promise<LinkAuth | null> {
   if (provider === "GOOGLE_DRIVE") {
     const folderId = parseGoogleDriveFolderLink(link);
     if (!folderId) return null;
@@ -208,10 +223,12 @@ export async function resolveLinkAuth(organizationId: string, provider: LinkProv
   if (provider === "DROPBOX") {
     const accessToken = await resolveDropboxToken(organizationId);
     if (!accessToken) return null;
-    return { provider, accessToken };
+    return { provider, accessToken, password };
   }
-  // OTHER: no credential to check — just confirm it's a well-formed link.
-  return looksLikeUrl(link) ? { provider: "OTHER" } : null;
+  // OTHER: no credential to check, but the page itself might be gated.
+  if (!looksLikeUrl(link)) return null;
+  const { resolved, cookie } = await resolveGenericLink(link, password);
+  return { provider: "OTHER", cookie, resolved };
 }
 
 /** Lists a link's folder name + images without downloading/importing anything — used by the preview (browse-and-select) endpoint, and internally by the import job once files are actually chosen. */
@@ -232,12 +249,18 @@ export async function listImagesForLink(auth: LinkAuth, link: string): Promise<{
   }
   if (auth.provider === "DROPBOX") {
     const [folderName, images] = await Promise.all([
-      getDropboxSharedLinkName(auth.accessToken, link),
-      listDropboxSharedLinkImages(auth.accessToken, link),
+      getDropboxSharedLinkName(auth.accessToken, link, auth.password),
+      listDropboxSharedLinkImages(auth.accessToken, link, auth.password),
     ]);
     return { folderName, images };
   }
-  return listImagesFromGenericLink(link);
+  if (auth.resolved.kind === "single") {
+    return { folderName: auth.resolved.image.name, images: [auth.resolved.image] };
+  }
+  // A password-protected gallery's scraped image URLs may need the same
+  // session cookie a browser tab doesn't have — route those through this
+  // app's own thumbnail proxy instead of hotlinking them directly.
+  return extractImagesFromHtml(auth.resolved.html, auth.resolved.baseUrl, { includeDirectThumbnails: !auth.cookie });
 }
 
 /** Downloads one previously-listed image, using whichever auth mode resolveLinkAuth settled on. */
@@ -248,7 +271,7 @@ export async function downloadLinkImage(auth: LinkAuth, link: string, image: Clo
       : downloadGoogleDrivePublicImage(auth.apiKey, image);
   }
   if (auth.provider === "DROPBOX") {
-    return downloadDropboxSharedLinkFile(auth.accessToken, link, image);
+    return downloadDropboxSharedLinkFile(auth.accessToken, link, image, auth.password);
   }
-  return downloadGenericImage(image);
+  return downloadGenericImage(image, auth.cookie);
 }

@@ -225,29 +225,37 @@ export function looksLikeDropboxLink(input: string): boolean {
   return /^https:\/\/(www\.)?dropbox\.com\/(scl\/fo|sh)\//.test(input.trim());
 }
 
-export async function getSharedLinkName(accessToken: string, link: string): Promise<string> {
+/** Appends a hint to a Dropbox API error when a password was supplied and the request still failed — likely means it was wrong, but Dropbox's own error text (kept in the message) is the authoritative reason. */
+function withPasswordHint(message: string, status: number, hadPassword: boolean): string {
+  if (hadPassword && (status === 401 || status === 403 || status === 409)) {
+    return `${message} (double-check the password if this link is protected)`;
+  }
+  return message;
+}
+
+export async function getSharedLinkName(accessToken: string, link: string, password?: string): Promise<string> {
   const res = await fetch("https://api.dropboxapi.com/2/sharing/get_shared_link_metadata", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ url: link }),
+    body: JSON.stringify({ url: link, ...(password ? { link_password: password } : {}) }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Could not open that Dropbox link (${res.status}): ${body.slice(0, 300)}`);
+    throw new Error(withPasswordHint(`Could not open that Dropbox link (${res.status}): ${body.slice(0, 300)}`, res.status, Boolean(password)));
   }
   const json = (await res.json()) as { name: string };
   return json.name;
 }
 
-export async function listImagesInSharedLink(accessToken: string, link: string): Promise<CloudImage[]> {
+export async function listImagesInSharedLink(accessToken: string, link: string, password?: string): Promise<CloudImage[]> {
   const res = await fetch(LIST_FOLDER_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ path: "", shared_link: { url: link }, recursive: false }),
+    body: JSON.stringify({ path: "", shared_link: { url: link, ...(password ? { password } : {}) }, recursive: false }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Dropbox API error (${res.status}): ${body.slice(0, 300)}`);
+    throw new Error(withPasswordHint(`Dropbox API error (${res.status}): ${body.slice(0, 300)}`, res.status, Boolean(password)));
   }
   const json = (await res.json()) as { entries: DropboxEntry[] };
   return json.entries
@@ -258,15 +266,15 @@ export async function listImagesInSharedLink(accessToken: string, link: string):
     });
 }
 
-export async function downloadSharedLinkFile(accessToken: string, link: string, image: CloudImage): Promise<CloudDownload> {
+export async function downloadSharedLinkFile(accessToken: string, link: string, image: CloudImage, password?: string): Promise<CloudDownload> {
   const res = await fetch(SHARED_LINK_FILE_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      "Dropbox-API-Arg": JSON.stringify({ url: link, path: image.id }),
+      "Dropbox-API-Arg": JSON.stringify({ url: link, path: image.id, ...(password ? { link_password: password } : {}) }),
     },
   });
-  if (!res.ok) throw new Error(`Failed to download "${image.name}" from Dropbox (${res.status}).`);
+  if (!res.ok) throw new Error(withPasswordHint(`Failed to download "${image.name}" from Dropbox (${res.status}).`, res.status, Boolean(password)));
   const buffer = Buffer.from(await res.arrayBuffer());
   return { buffer, mimeType: image.mimeType, filename: image.name };
 }

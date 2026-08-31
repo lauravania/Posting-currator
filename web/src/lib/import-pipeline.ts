@@ -168,12 +168,18 @@ export async function runCloudImportJob(jobId: string, provider: "GOOGLE_DRIVE" 
  * previewed the folder and checked specific photos), only those are
  * imported. Omit it to import everything in the folder in one shot.
  */
-export async function runLinkImportJob(jobId: string, provider: LinkProvider, link: string, selectedImageIds?: string[]) {
+export async function runLinkImportJob(
+  jobId: string,
+  provider: LinkProvider,
+  link: string,
+  selectedImageIds?: string[],
+  password?: string
+) {
   const job = await prisma.photoImportJob.findUniqueOrThrow({ where: { id: jobId }, include: { wedding: true } });
   const organizationId = job.wedding.organizationId;
 
   try {
-    const auth = await resolveLinkAuth(organizationId, provider, link);
+    const auth = await resolveLinkAuth(organizationId, provider, link, password);
     if (!auth) {
       throw new Error(
         provider === "GOOGLE_DRIVE"

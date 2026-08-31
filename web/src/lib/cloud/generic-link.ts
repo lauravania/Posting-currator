@@ -13,7 +13,28 @@ import type { CloudImage, CloudDownload } from "./types";
  * expose any images to a plain server-side fetch — that's a real
  * limitation, not something to paper over, so an empty result surfaces an
  * honest explanation rather than pretending photos were found.
+ *
+ * Password-protected galleries (also common on Pixieset) are handled by
+ * detecting a standard <input type="password"> form on the page,
+ * submitting the given password to it, and carrying the resulting session
+ * cookie through the listing + every image download. Like the rest of
+ * this module, this only works for a server-rendered password gate — a
+ * gate implemented purely in client-side JS won't be visible here either.
  */
+
+export class PasswordRequiredError extends Error {
+  constructor(message = "This link is password protected.") {
+    super(message);
+    this.name = "PasswordRequiredError";
+  }
+}
+
+export class IncorrectPasswordError extends Error {
+  constructor(message = "That password wasn't accepted.") {
+    super(message);
+    this.name = "IncorrectPasswordError";
+  }
+}
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
 const SKIP_FILENAME_HINTS = /(logo|icon|favicon|sprite|avatar|spacer|pixel|blank|placeholder|badge|button)/i;
@@ -155,38 +176,175 @@ async function fetchWithTimeout(url: string, headers: Record<string, string>) {
   }
 }
 
-export async function listImagesFromGenericLink(link: string): Promise<{ folderName: string; images: CloudImage[] }> {
+/** Collects every Set-Cookie header from a response into one "name=value; name2=value2" string suitable for re-sending. */
+function collectSetCookies(res: Response): string | null {
+  const withGetSetCookie = res.headers as Headers & { getSetCookie?: () => string[] };
+  const raw =
+    typeof withGetSetCookie.getSetCookie === "function"
+      ? withGetSetCookie.getSetCookie()
+      : (() => {
+          const single = res.headers.get("set-cookie");
+          return single ? [single] : [];
+        })();
+  if (raw.length === 0) return null;
+  return raw.map((c) => c.split(";")[0]).join("; ");
+}
+
+function mergeCookies(...jars: (string | null)[]): string | null {
+  const parts = jars.filter((j): j is string => Boolean(j));
+  return parts.length ? parts.join("; ") : null;
+}
+
+type PasswordForm = { action: string; method: string; fields: Record<string, string>; passwordFieldName: string };
+
+/** Looks for a standard HTML <form> containing a password input — the common shape of a server-rendered gallery password gate. */
+function findPasswordForm(html: string): PasswordForm | null {
+  const formRe = /<form\b[^>]*>[\s\S]*?<\/form>/gi;
+  for (const formHtml of html.match(formRe) ?? []) {
+    const passwordInputMatch = formHtml.match(/<input\b[^>]*type=["']password["'][^>]*>/i);
+    if (!passwordInputMatch) continue;
+
+    const nameMatch = passwordInputMatch[0].match(/\bname=["']([^"']+)["']/i);
+    const passwordFieldName = nameMatch ? nameMatch[1] : "password";
+
+    const openTagMatch = formHtml.match(/<form\b[^>]*>/i)?.[0] ?? "<form>";
+    const actionMatch = openTagMatch.match(/\baction=["']([^"']*)["']/i);
+    const methodMatch = openTagMatch.match(/\bmethod=["']([^"']+)["']/i);
+    const action = actionMatch ? decodeEntities(actionMatch[1]) : "";
+    const method = (methodMatch ? methodMatch[1] : "POST").toUpperCase();
+
+    const fields: Record<string, string> = {};
+    const inputRe = /<input\b[^>]*>/gi;
+    for (const inputTag of formHtml.match(inputRe) ?? []) {
+      const typeMatch = inputTag.match(/\btype=["']([^"']+)["']/i);
+      const type = typeMatch ? typeMatch[1].toLowerCase() : "text";
+      if (type === "submit" || type === "button" || type === "reset" || type === "image") continue;
+      const nMatch = inputTag.match(/\bname=["']([^"']+)["']/i);
+      if (!nMatch) continue;
+      if (type === "password") continue; // filled in by the caller with the real password
+      const vMatch = inputTag.match(/\bvalue=["']([^"']*)["']/i);
+      fields[nMatch[1]] = decodeEntities(vMatch ? vMatch[1] : "");
+    }
+
+    return { action, method, fields, passwordFieldName };
+  }
+  return null;
+}
+
+export type GenericResolved = { kind: "single"; image: CloudImage } | { kind: "gallery"; html: string; baseUrl: URL };
+
+/**
+ * Opens a link, submitting a password if the page is gated and one was
+ * given. Throws PasswordRequiredError if the page needs a password we
+ * don't have, or IncorrectPasswordError if the one given didn't work —
+ * callers can use these to prompt the user distinctly from a generic
+ * "couldn't open that link" failure.
+ */
+export async function resolveGenericLink(link: string, password?: string): Promise<{ resolved: GenericResolved; cookie: string | null }> {
   if (!looksLikeUrl(link)) throw new Error("That doesn't look like a valid link.");
 
-  const res = await fetchWithTimeout(link, BROWSER_HEADERS);
-  if (!res.ok) {
-    throw new Error(`Couldn't open that page (${res.status}). Check the link is public and try again.`);
+  const firstRes = await fetchWithTimeout(link, BROWSER_HEADERS);
+  if (!firstRes.ok) {
+    throw new Error(`Couldn't open that page (${firstRes.status}). Check the link is public and try again.`);
   }
 
-  const contentType = res.headers.get("content-type") ?? "";
+  const contentType = firstRes.headers.get("content-type") ?? "";
 
-  // The pasted link is itself a single hosted photo, not a gallery page.
+  // The pasted link is itself a single hosted photo, not a gallery page —
+  // no password wall to worry about.
   if (contentType.startsWith("image/")) {
-    const base = new URL(res.url);
+    const absUrl = firstRes.url;
+    const name = filenameFromUrl(absUrl, 0);
     return {
-      folderName: filenameFromUrl(base.toString(), 0),
-      images: [{ id: base.toString(), name: filenameFromUrl(base.toString(), 0), mimeType: contentType, sizeBytes: null }],
+      resolved: { kind: "single", image: { id: absUrl, name, mimeType: contentType, sizeBytes: null, thumbnailUrl: absUrl } },
+      cookie: null,
     };
   }
-
   if (!contentType.includes("text/html")) {
     throw new Error("That link doesn't point to a web page or photo this app can read.");
   }
 
-  const html = await res.text();
-  const base = new URL(res.url);
+  const firstHtml = await firstRes.text();
+  let cookie = collectSetCookies(firstRes);
+  const form = findPasswordForm(firstHtml);
 
+  if (!form) {
+    // No password wall detected — proceed with what we already fetched.
+    return { resolved: { kind: "gallery", html: firstHtml, baseUrl: new URL(firstRes.url) }, cookie };
+  }
+  if (!password) {
+    throw new PasswordRequiredError();
+  }
+
+  const actionUrl = resolveUrl(form.action, new URL(firstRes.url)) ?? firstRes.url;
+  const body = new URLSearchParams({ ...form.fields, [form.passwordFieldName]: password });
+
+  const submitHeaders: Record<string, string> = { ...BROWSER_HEADERS, "Content-Type": "application/x-www-form-urlencoded" };
+  if (cookie) submitHeaders.Cookie = cookie;
+
+  // redirect: "manual" — fetch's automatic redirect-following only exposes
+  // the *final* response's headers, which would silently drop the
+  // Set-Cookie a password-check response sets on its redirect. Following
+  // it ourselves lets us carry that cookie into the next request.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let submitRes: Response;
+  try {
+    submitRes = await fetch(actionUrl, {
+      method: form.method === "GET" ? "GET" : "POST",
+      headers: submitHeaders,
+      body: form.method === "GET" ? undefined : body,
+      redirect: "manual",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  cookie = mergeCookies(cookie, collectSetCookies(submitRes));
+
+  let resultHtml: string;
+  let resultUrl: string;
+  const location = submitRes.status >= 300 && submitRes.status < 400 ? submitRes.headers.get("location") : null;
+  if (location) {
+    const nextUrl = resolveUrl(location, new URL(actionUrl)) ?? link;
+    const followRes = await fetchWithTimeout(nextUrl, cookie ? { ...BROWSER_HEADERS, Cookie: cookie } : BROWSER_HEADERS);
+    cookie = mergeCookies(cookie, collectSetCookies(followRes));
+    resultHtml = await followRes.text();
+    resultUrl = followRes.url;
+  } else {
+    resultHtml = await submitRes.text();
+    resultUrl = submitRes.url;
+  }
+
+  // If we still don't have the gallery (e.g. the submit response was a
+  // plain confirmation page rather than a redirect), re-fetch the
+  // original link with whatever cookie we've collected so far.
+  if (findPasswordForm(resultHtml)) {
+    const retryRes = await fetchWithTimeout(link, cookie ? { ...BROWSER_HEADERS, Cookie: cookie } : BROWSER_HEADERS);
+    cookie = mergeCookies(cookie, collectSetCookies(retryRes));
+    resultHtml = await retryRes.text();
+    resultUrl = retryRes.url;
+    if (findPasswordForm(resultHtml)) {
+      throw new IncorrectPasswordError();
+    }
+  }
+
+  return { resolved: { kind: "gallery", html: resultHtml, baseUrl: new URL(resultUrl) }, cookie };
+}
+
+/** Parses image URLs out of already-fetched gallery HTML. `includeDirectThumbnails` is false for password-protected galleries, since the scraped URLs may need the same session cookie the browser doesn't have — those fall back to this app's own thumbnail proxy instead. */
+export function extractImagesFromHtml(
+  html: string,
+  baseUrl: URL,
+  opts: { includeDirectThumbnails: boolean }
+): { folderName: string; images: CloudImage[] } {
   const candidates = [...extractJsonLdImageUrls(html), ...extractImgTagUrls(html), ...extractOgImage(html)];
 
   const seen = new Set<string>();
   const images: CloudImage[] = [];
   for (const candidate of candidates) {
-    const abs = resolveUrl(candidate, base);
+    const abs = resolveUrl(candidate, baseUrl);
     if (!abs || seen.has(abs) || !isLikelyPhoto(abs)) continue;
     seen.add(abs);
     images.push({
@@ -194,9 +352,7 @@ export async function listImagesFromGenericLink(link: string): Promise<{ folderN
       name: filenameFromUrl(abs, images.length),
       mimeType: mimeTypeFromUrl(abs),
       sizeBytes: null,
-      // The scraped URL is already a public, directly-loadable image —
-      // no need to proxy/resize it just to show a preview thumbnail.
-      thumbnailUrl: abs,
+      thumbnailUrl: opts.includeDirectThumbnails ? abs : null,
     });
     if (images.length >= MAX_IMAGES) break;
   }
@@ -209,12 +365,13 @@ export async function listImagesFromGenericLink(link: string): Promise<{ folderN
     );
   }
 
-  const folderName = extractTitle(html) ?? base.hostname;
+  const folderName = extractTitle(html) ?? baseUrl.hostname;
   return { folderName, images };
 }
 
-export async function downloadGenericImage(image: CloudImage): Promise<CloudDownload> {
-  const res = await fetchWithTimeout(image.id, BROWSER_HEADERS);
+export async function downloadGenericImage(image: CloudImage, cookie?: string | null): Promise<CloudDownload> {
+  const headers = cookie ? { ...BROWSER_HEADERS, Cookie: cookie } : BROWSER_HEADERS;
+  const res = await fetchWithTimeout(image.id, headers);
   if (!res.ok) throw new Error(`Failed to download "${image.name}" (${res.status}).`);
   const buffer = Buffer.from(await res.arrayBuffer());
   return { buffer, mimeType: res.headers.get("content-type") || image.mimeType, filename: image.name };

@@ -10,6 +10,8 @@ import {
   parseGoogleDriveFolderLink,
   looksLikeDropboxLink,
   looksLikeUrl,
+  PasswordRequiredError,
+  IncorrectPasswordError,
 } from "@/lib/cloud";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -36,6 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const body = await req.json().catch(() => ({}));
   const provider = parseLinkProviderParam(String(body.provider || ""));
   const link = String(body.link || "").trim();
+  const password = typeof body.password === "string" && body.password.length > 0 ? body.password : undefined;
 
   if (!provider) return NextResponse.json({ error: "Unknown provider." }, { status: 400 });
   if (!link) return NextResponse.json({ error: "Paste a link first." }, { status: 400 });
@@ -51,7 +54,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const organizationId = session.user.organizationId;
-  const auth = await resolveLinkAuth(organizationId, provider, link);
+  let auth;
+  try {
+    auth = await resolveLinkAuth(organizationId, provider, link, password);
+  } catch (err) {
+    if (err instanceof PasswordRequiredError) {
+      return NextResponse.json({ error: "This link is password protected — enter the password and try again.", passwordRequired: true }, { status: 401 });
+    }
+    if (err instanceof IncorrectPasswordError) {
+      return NextResponse.json({ error: "That password wasn't accepted — check it and try again.", passwordRequired: true }, { status: 401 });
+    }
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Could not access that link." }, { status: 502 });
+  }
+
   if (!auth) {
     const providerName = linkProviderLabel(provider);
     const envHint = provider === "GOOGLE_DRIVE" ? "GOOGLE_DRIVE_API_KEY" : "DROPBOX_REFRESH_TOKEN";
