@@ -1,4 +1,4 @@
-import type { CloudProvider } from "@prisma/client";
+import type { CloudProvider, ImportSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
 import {
@@ -18,11 +18,13 @@ import {
   listImagesInSharedLink as listDropboxSharedLinkImages,
   downloadSharedLinkFile as downloadDropboxSharedLinkFile,
 } from "./dropbox";
+import { looksLikeUrl, listImagesFromGenericLink, downloadGenericImage } from "./generic-link";
 import type { CloudProviderAdapter, CloudTokens, CloudImage } from "./types";
 
 export * from "./types";
 export { parseGoogleDriveFolderLink, downloadPublicImage as downloadGoogleDrivePublicImage } from "./google-drive";
 export { looksLikeDropboxLink, downloadSharedLinkFile as downloadDropboxSharedLinkFile } from "./dropbox";
+export { looksLikeUrl } from "./generic-link";
 
 const ADAPTERS: Record<CloudProvider, CloudProviderAdapter> = {
   GOOGLE_DRIVE: googleDriveAdapter,
@@ -136,9 +138,34 @@ export async function getValidAccessToken(organizationId: string, provider: Clou
 // is enough to import from a link even for an org that never went through
 // the "Connect" flow. An existing OAuth connection still works too and is
 // preferred where present (see resolve*Auth below).
+//
+// "OTHER" is a third, wider category: any link this app has no dedicated
+// API integration for (Pixieset, Apple Shared Albums, SmugMug, a
+// photographer's own site, ...). There's no credential to configure for
+// it — it just reads the public page directly — so it's always available.
 // ---------------------------------------------------------------------------
 
-export function isLinkImportAvailable(provider: CloudProvider): boolean {
+export type LinkProvider = CloudProvider | "OTHER";
+
+/** Maps the `[provider]` URL segment ("google-drive" | "dropbox" | "other") used by the link-import routes. Distinct from parseProviderParam, which is OAuth-only and has no "other" case. */
+export function parseLinkProviderParam(param: string): LinkProvider | null {
+  if (param === "google-drive") return "GOOGLE_DRIVE";
+  if (param === "dropbox") return "DROPBOX";
+  if (param === "other") return "OTHER";
+  return null;
+}
+
+export function linkProviderLabel(provider: LinkProvider): string {
+  return provider === "OTHER" ? "Other link" : providerLabel(provider);
+}
+
+/** The ImportSource value photos get tagged with once imported via this provider — distinct from LinkProvider/CloudProvider because "OTHER" isn't a value those enums have. */
+export function importSourceForLinkProvider(provider: LinkProvider): ImportSource {
+  return provider === "OTHER" ? "OTHER_LINK" : provider;
+}
+
+export function isLinkImportAvailable(provider: LinkProvider): boolean {
+  if (provider === "OTHER") return true;
   return provider === "GOOGLE_DRIVE" ? isGoogleDriveApiKeyConfigured() : isDropboxLinkImportConfigured();
 }
 
@@ -164,10 +191,11 @@ export async function resolveDropboxToken(organizationId: string): Promise<strin
 export type LinkAuth =
   | { provider: "GOOGLE_DRIVE"; mode: "oauth"; accessToken: string; folderId: string }
   | { provider: "GOOGLE_DRIVE"; mode: "apikey"; apiKey: string; folderId: string }
-  | { provider: "DROPBOX"; accessToken: string };
+  | { provider: "DROPBOX"; accessToken: string }
+  | { provider: "OTHER" };
 
 /** Resolves whatever's needed to read a pasted link (OAuth connection first, then the simple key/token) — the one place both the preview and import routes figure out "can we actually reach this link, and how". */
-export async function resolveLinkAuth(organizationId: string, provider: CloudProvider, link: string): Promise<LinkAuth | null> {
+export async function resolveLinkAuth(organizationId: string, provider: LinkProvider, link: string): Promise<LinkAuth | null> {
   if (provider === "GOOGLE_DRIVE") {
     const folderId = parseGoogleDriveFolderLink(link);
     if (!folderId) return null;
@@ -177,9 +205,13 @@ export async function resolveLinkAuth(organizationId: string, provider: CloudPro
       ? { provider, mode: "oauth", accessToken: auth.accessToken, folderId }
       : { provider, mode: "apikey", apiKey: auth.apiKey, folderId };
   }
-  const accessToken = await resolveDropboxToken(organizationId);
-  if (!accessToken) return null;
-  return { provider, accessToken };
+  if (provider === "DROPBOX") {
+    const accessToken = await resolveDropboxToken(organizationId);
+    if (!accessToken) return null;
+    return { provider, accessToken };
+  }
+  // OTHER: no credential to check — just confirm it's a well-formed link.
+  return looksLikeUrl(link) ? { provider: "OTHER" } : null;
 }
 
 /** Lists a link's folder name + images without downloading/importing anything — used by the preview (browse-and-select) endpoint, and internally by the import job once files are actually chosen. */
@@ -198,11 +230,14 @@ export async function listImagesForLink(auth: LinkAuth, link: string): Promise<{
     ]);
     return { folderName, images };
   }
-  const [folderName, images] = await Promise.all([
-    getDropboxSharedLinkName(auth.accessToken, link),
-    listDropboxSharedLinkImages(auth.accessToken, link),
-  ]);
-  return { folderName, images };
+  if (auth.provider === "DROPBOX") {
+    const [folderName, images] = await Promise.all([
+      getDropboxSharedLinkName(auth.accessToken, link),
+      listDropboxSharedLinkImages(auth.accessToken, link),
+    ]);
+    return { folderName, images };
+  }
+  return listImagesFromGenericLink(link);
 }
 
 /** Downloads one previously-listed image, using whichever auth mode resolveLinkAuth settled on. */
@@ -212,5 +247,8 @@ export async function downloadLinkImage(auth: LinkAuth, link: string, image: Clo
       ? getCloudAdapter("GOOGLE_DRIVE").downloadImage(auth.accessToken, image)
       : downloadGoogleDrivePublicImage(auth.apiKey, image);
   }
-  return downloadDropboxSharedLinkFile(auth.accessToken, link, image);
+  if (auth.provider === "DROPBOX") {
+    return downloadDropboxSharedLinkFile(auth.accessToken, link, image);
+  }
+  return downloadGenericImage(image);
 }

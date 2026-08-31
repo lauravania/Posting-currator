@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/session";
 import { requireWeddingInOrg, NotFoundOrForbiddenError } from "@/lib/db-scope";
 import {
-  parseProviderParam,
+  parseLinkProviderParam,
+  linkProviderLabel,
   isLinkImportAvailable,
   resolveLinkAuth,
   listImagesForLink,
   parseGoogleDriveFolderLink,
   looksLikeDropboxLink,
+  looksLikeUrl,
 } from "@/lib/cloud";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -32,25 +34,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const body = await req.json().catch(() => ({}));
-  const providerSlug = String(body.provider || "");
-  const provider = providerSlug === "google-drive" ? "GOOGLE_DRIVE" : providerSlug === "dropbox" ? "DROPBOX" : parseProviderParam(providerSlug);
+  const provider = parseLinkProviderParam(String(body.provider || ""));
   const link = String(body.link || "").trim();
 
   if (!provider) return NextResponse.json({ error: "Unknown provider." }, { status: 400 });
   if (!link) return NextResponse.json({ error: "Paste a link first." }, { status: 400 });
 
-  if (provider === "GOOGLE_DRIVE") {
-    if (!parseGoogleDriveFolderLink(link)) {
-      return NextResponse.json({ error: "That doesn't look like a Google Drive folder link." }, { status: 400 });
-    }
-  } else if (!looksLikeDropboxLink(link)) {
+  if (provider === "GOOGLE_DRIVE" && !parseGoogleDriveFolderLink(link)) {
+    return NextResponse.json({ error: "That doesn't look like a Google Drive folder link." }, { status: 400 });
+  }
+  if (provider === "DROPBOX" && !looksLikeDropboxLink(link)) {
     return NextResponse.json({ error: "That doesn't look like a Dropbox share link." }, { status: 400 });
+  }
+  if (provider === "OTHER" && !looksLikeUrl(link)) {
+    return NextResponse.json({ error: "That doesn't look like a valid link." }, { status: 400 });
   }
 
   const organizationId = session.user.organizationId;
   const auth = await resolveLinkAuth(organizationId, provider, link);
   if (!auth) {
-    const providerName = provider === "GOOGLE_DRIVE" ? "Google Drive" : "Dropbox";
+    const providerName = linkProviderLabel(provider);
     const envHint = provider === "GOOGLE_DRIVE" ? "GOOGLE_DRIVE_API_KEY" : "DROPBOX_REFRESH_TOKEN";
     return NextResponse.json(
       {

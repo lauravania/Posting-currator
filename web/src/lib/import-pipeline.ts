@@ -10,7 +10,9 @@ import {
   downloadLinkImage,
   getValidAccessToken,
   getCloudAdapter,
+  importSourceForLinkProvider,
   type CloudImage,
+  type LinkProvider,
 } from "@/lib/cloud";
 import type { ImportSource } from "@prisma/client";
 
@@ -166,12 +168,7 @@ export async function runCloudImportJob(jobId: string, provider: "GOOGLE_DRIVE" 
  * previewed the folder and checked specific photos), only those are
  * imported. Omit it to import everything in the folder in one shot.
  */
-export async function runLinkImportJob(
-  jobId: string,
-  provider: "GOOGLE_DRIVE" | "DROPBOX",
-  link: string,
-  selectedImageIds?: string[]
-) {
+export async function runLinkImportJob(jobId: string, provider: LinkProvider, link: string, selectedImageIds?: string[]) {
   const job = await prisma.photoImportJob.findUniqueOrThrow({ where: { id: jobId }, include: { wedding: true } });
   const organizationId = job.wedding.organizationId;
 
@@ -181,7 +178,9 @@ export async function runLinkImportJob(
       throw new Error(
         provider === "GOOGLE_DRIVE"
           ? "Google Drive isn't connected and no GOOGLE_DRIVE_API_KEY is configured for link import."
-          : "Dropbox isn't connected and no DROPBOX_REFRESH_TOKEN is configured for link import."
+          : provider === "DROPBOX"
+            ? "Dropbox isn't connected and no DROPBOX_REFRESH_TOKEN is configured for link import."
+            : "That link isn't valid."
       );
     }
 
@@ -202,7 +201,7 @@ export async function runLinkImportJob(
         buffer: download.buffer,
         filename: download.filename,
         mimeType: download.mimeType || image.mimeType,
-        importSource: provider,
+        importSource: importSourceForLinkProvider(provider),
         importJobId: jobId,
       });
     });

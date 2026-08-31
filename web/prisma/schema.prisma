@@ -189,6 +189,11 @@ enum ImportSource {
   DEVICE
   GOOGLE_DRIVE
   DROPBOX
+  // A pasted link to a gallery page this app has no dedicated API
+  // integration for (Pixieset, Apple Shared Albums, SmugMug, Zenfolio,
+  // etc.) — read directly off the public page rather than via any
+  // provider API, since none of these expose one to third parties.
+  OTHER_LINK
 }
 
 enum ImportJobStatus {

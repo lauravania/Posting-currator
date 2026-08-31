@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/field";
 import { ImportProgress } from "./import-progress";
 
-type ProviderSlug = "google-drive" | "dropbox";
+type ProviderSlug = "google-drive" | "dropbox" | "other";
 
 export type ProviderStatus = {
   configured: boolean; // OAuth client is set up (kept for future use — not surfaced in this UI)
@@ -31,6 +31,16 @@ type PreviewState = {
 const LINK_PLACEHOLDER: Record<ProviderSlug, string> = {
   "google-drive": "https://drive.google.com/drive/folders/…",
   dropbox: "https://www.dropbox.com/scl/fo/…",
+  other: "https://yourname.pixieset.com/… or any gallery link",
+};
+
+const LINK_HELP: Record<ProviderSlug, string> = {
+  "google-drive":
+    "Paste a Google Drive folder link shared as “Anyone with the link” to see what’s inside and choose which photos to import.",
+  dropbox:
+    "Paste a Dropbox shared link to see what’s inside and choose which photos to import.",
+  other:
+    "Paste a link to a gallery page — Pixieset, Apple Shared Albums, SmugMug, Zenfolio, or a photographer’s own site — and this reads the photos directly off the page. Best-effort: some galleries load their photos with JavaScript that a direct page fetch can’t see, in which case try Google Drive/Dropbox instead, or paste a direct link to one photo.",
 };
 
 /**
@@ -51,7 +61,9 @@ export function CloudImportPanel({
   weddingId: string;
   provider: ProviderSlug;
   label: string;
-  status: ProviderStatus;
+  // "Other" links need no credential — there's nothing to configure, so
+  // no status to check.
+  status?: ProviderStatus;
 }) {
   const [link, setLink] = useState("");
   const [opening, setOpening] = useState(false);
@@ -61,7 +73,7 @@ export function CloudImportPanel({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
 
-  const canPasteLink = status.linkImportAvailable || status.connected;
+  const canPasteLink = provider === "other" || Boolean(status?.linkImportAvailable || status?.connected);
 
   function thumbnailSrc(image: CloudImage, previewLink: string): string {
     if (image.thumbnailUrl) return image.thumbnailUrl;
@@ -207,10 +219,7 @@ export function CloudImportPanel({
   return (
     <div className="border border-hairline p-6">
       <p className="font-serif text-lg mb-2">{label}</p>
-      <p className="font-sans text-xs text-ink-soft mb-4">
-        Paste a {label} folder link shared as &ldquo;Anyone with the link&rdquo; to see what&rsquo;s inside and choose
-        which photos to import.
-      </p>
+      <p className="font-sans text-xs text-ink-soft mb-4">{LINK_HELP[provider]}</p>
       <div className="flex gap-2">
         <Input
           value={link}

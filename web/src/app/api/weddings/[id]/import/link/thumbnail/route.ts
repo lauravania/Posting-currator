@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
 import { requireSession } from "@/lib/session";
 import { requireWeddingInOrg, NotFoundOrForbiddenError } from "@/lib/db-scope";
-import { parseProviderParam, resolveLinkAuth, downloadLinkImage } from "@/lib/cloud";
+import { parseLinkProviderParam, resolveLinkAuth, downloadLinkImage } from "@/lib/cloud";
 import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { searchParams } = new URL(req.url);
   const providerSlug = searchParams.get("provider") || "";
-  const provider = providerSlug === "google-drive" ? "GOOGLE_DRIVE" : providerSlug === "dropbox" ? "DROPBOX" : parseProviderParam(providerSlug);
+  const provider = parseLinkProviderParam(providerSlug);
   const link = searchParams.get("link") || "";
   const imageId = searchParams.get("imageId") || "";
   const name = searchParams.get("name") || "photo.jpg";

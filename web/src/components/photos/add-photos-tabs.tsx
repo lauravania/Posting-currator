@@ -4,7 +4,7 @@ import { useState } from "react";
 import { UploadDropzone } from "./upload-dropzone";
 import { CloudImportPanel, type ProviderStatus } from "./cloud-import-panel";
 
-type Tab = "device" | "google-drive" | "dropbox";
+type Tab = "device" | "google-drive" | "dropbox" | "other";
 
 export function AddPhotosTabs({
   weddingId,
@@ -21,6 +21,7 @@ export function AddPhotosTabs({
     { id: "device", label: "This device" },
     { id: "google-drive", label: "Google Drive" },
     { id: "dropbox", label: "Dropbox" },
+    { id: "other", label: "Other link" },
   ];
 
   return (
@@ -44,6 +45,7 @@ export function AddPhotosTabs({
         <CloudImportPanel weddingId={weddingId} provider="google-drive" label="Google Drive" status={googleDriveStatus} />
       )}
       {tab === "dropbox" && <CloudImportPanel weddingId={weddingId} provider="dropbox" label="Dropbox" status={dropboxStatus} />}
+      {tab === "other" && <CloudImportPanel weddingId={weddingId} provider="other" label="Other link" />}
     </div>
   );
 }

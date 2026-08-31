@@ -2,16 +2,27 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/session";
 import { requireWeddingInOrg, NotFoundOrForbiddenError } from "@/lib/db-scope";
 import { prisma } from "@/lib/prisma";
-import { parseProviderParam, isLinkImportAvailable, resolveGoogleDriveAuth, resolveDropboxToken, parseGoogleDriveFolderLink, looksLikeDropboxLink } from "@/lib/cloud";
+import {
+  parseLinkProviderParam,
+  linkProviderLabel,
+  importSourceForLinkProvider,
+  isLinkImportAvailable,
+  resolveLinkAuth,
+  parseGoogleDriveFolderLink,
+  looksLikeDropboxLink,
+  looksLikeUrl,
+} from "@/lib/cloud";
 import { runLinkImportJob } from "@/lib/import-pipeline";
 import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
-// The "drop a link" path: paste a shared Google Drive folder link or
-// Dropbox shared link and import starts immediately — no OAuth consent
-// screen required as long as GOOGLE_DRIVE_API_KEY / DROPBOX_REFRESH_TOKEN
-// (or an existing "Connect" flow OAuth connection) is configured.
+// The "drop a link" path: paste a shared Google Drive folder link, a
+// Dropbox shared link, or any other gallery link (Pixieset, Apple Shared
+// Albums, etc.) and import starts. Google Drive/Dropbox need
+// GOOGLE_DRIVE_API_KEY / DROPBOX_REFRESH_TOKEN (or an existing "Connect"
+// OAuth connection) configured; "other" links need no credential at all —
+// they're read directly off the public page.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await requireSession();
 
@@ -26,11 +37,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const body = await req.json().catch(() => ({}));
-  const providerSlug = String(body.provider || "");
-  const provider = providerSlug === "google-drive" ? "GOOGLE_DRIVE" : providerSlug === "dropbox" ? "DROPBOX" : parseProviderParam(providerSlug);
+  const provider = parseLinkProviderParam(String(body.provider || ""));
   const link = String(body.link || "").trim();
   // From the browse-and-select preview: only import the photos the user
-  // checked. Omit/empty to fall back to importing everything in the folder.
+  // checked. Omit/empty to fall back to importing everything found.
   const imageIds: string[] | undefined = Array.isArray(body.imageIds)
     ? body.imageIds.filter((x: unknown): x is string => typeof x === "string" && x.length > 0)
     : undefined;
@@ -38,20 +48,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!provider) return NextResponse.json({ error: "Unknown provider." }, { status: 400 });
   if (!link) return NextResponse.json({ error: "Paste a link first." }, { status: 400 });
 
-  if (provider === "GOOGLE_DRIVE") {
-    if (!parseGoogleDriveFolderLink(link)) {
-      return NextResponse.json({ error: "That doesn't look like a Google Drive folder link." }, { status: 400 });
-    }
-  } else if (!looksLikeDropboxLink(link)) {
+  if (provider === "GOOGLE_DRIVE" && !parseGoogleDriveFolderLink(link)) {
+    return NextResponse.json({ error: "That doesn't look like a Google Drive folder link." }, { status: 400 });
+  }
+  if (provider === "DROPBOX" && !looksLikeDropboxLink(link)) {
     return NextResponse.json({ error: "That doesn't look like a Dropbox share link." }, { status: 400 });
+  }
+  if (provider === "OTHER" && !looksLikeUrl(link)) {
+    return NextResponse.json({ error: "That doesn't look like a valid link." }, { status: 400 });
   }
 
   const organizationId = session.user.organizationId;
-  const hasAuth =
-    provider === "GOOGLE_DRIVE" ? Boolean(await resolveGoogleDriveAuth(organizationId)) : Boolean(await resolveDropboxToken(organizationId));
+  const auth = await resolveLinkAuth(organizationId, provider, link);
 
-  if (!hasAuth) {
-    const providerName = provider === "GOOGLE_DRIVE" ? "Google Drive" : "Dropbox";
+  if (!auth) {
+    const providerName = linkProviderLabel(provider);
     const envHint = provider === "GOOGLE_DRIVE" ? "GOOGLE_DRIVE_API_KEY" : "DROPBOX_REFRESH_TOKEN";
     return NextResponse.json(
       {
@@ -64,7 +75,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const job = await prisma.photoImportJob.create({
-    data: { weddingId: params.id, source: provider, status: "PENDING", sourceLabel: link },
+    data: { weddingId: params.id, source: importSourceForLinkProvider(provider), status: "PENDING", sourceLabel: link },
   });
 
   void runLinkImportJob(job.id, provider, link, imageIds && imageIds.length > 0 ? imageIds : undefined);
