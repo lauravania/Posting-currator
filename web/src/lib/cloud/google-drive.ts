@@ -31,6 +31,15 @@ async function driveFetch(path: string, accessToken: string, params?: Record<str
   return res;
 }
 
+export async function getFolderNameOAuth(accessToken: string, folderId: string): Promise<string> {
+  const res = await driveFetch(`${DRIVE_FILES_URL}/${folderId}`, accessToken, { fields: "name,mimeType" });
+  const json = (await res.json()) as { name: string; mimeType: string };
+  if (json.mimeType !== "application/vnd.google-apps.folder") {
+    throw new Error("That link doesn't point to a Google Drive folder.");
+  }
+  return json.name;
+}
+
 export const googleDriveAdapter: CloudProviderAdapter = {
   isConfigured() {
     return Boolean(clientId() && clientSecret());
@@ -140,15 +149,16 @@ export const googleDriveAdapter: CloudProviderAdapter = {
     const q = `mimeType contains 'image/' and trashed=false and '${folderId}' in parents`;
     const res = await driveFetch(DRIVE_FILES_URL, accessToken, {
       q,
-      fields: "files(id,name,mimeType,size)",
+      fields: "files(id,name,mimeType,size,thumbnailLink)",
       pageSize: "1000",
     });
-    const json = (await res.json()) as { files: { id: string; name: string; mimeType: string; size?: string }[] };
+    const json = (await res.json()) as { files: { id: string; name: string; mimeType: string; size?: string; thumbnailLink?: string }[] };
     return json.files.map((f) => ({
       id: f.id,
       name: f.name,
       mimeType: f.mimeType,
       sizeBytes: f.size ? Number(f.size) : null,
+      thumbnailUrl: f.thumbnailLink ?? null,
     }));
   },
 
@@ -201,6 +211,9 @@ async function driveFetchWithKey(path: string, apiKey: string, params?: Record<s
   const res = await fetch(url);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    if (res.status === 400 && /API key not valid/i.test(body)) {
+      throw new Error("GOOGLE_DRIVE_API_KEY is set but isn't a valid Google API key — check it in the Render/host environment settings.");
+    }
     const hint =
       res.status === 403 || res.status === 404
         ? " (make sure the folder is shared as \"Anyone with the link\")"
@@ -221,9 +234,19 @@ export async function getPublicFolderName(apiKey: string, folderId: string): Pro
 
 export async function listImagesInPublicFolder(apiKey: string, folderId: string): Promise<CloudImage[]> {
   const q = `mimeType contains 'image/' and trashed=false and '${folderId}' in parents`;
-  const res = await driveFetchWithKey(DRIVE_FILES_URL, apiKey, { q, fields: "files(id,name,mimeType,size)", pageSize: "1000" });
-  const json = (await res.json()) as { files: { id: string; name: string; mimeType: string; size?: string }[] };
-  return json.files.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, sizeBytes: f.size ? Number(f.size) : null }));
+  const res = await driveFetchWithKey(DRIVE_FILES_URL, apiKey, {
+    q,
+    fields: "files(id,name,mimeType,size,thumbnailLink)",
+    pageSize: "1000",
+  });
+  const json = (await res.json()) as { files: { id: string; name: string; mimeType: string; size?: string; thumbnailLink?: string }[] };
+  return json.files.map((f) => ({
+    id: f.id,
+    name: f.name,
+    mimeType: f.mimeType,
+    sizeBytes: f.size ? Number(f.size) : null,
+    thumbnailUrl: f.thumbnailLink ?? null,
+  }));
 }
 
 export async function downloadPublicImage(apiKey: string, image: CloudImage): Promise<CloudDownload> {

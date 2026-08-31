@@ -1,21 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/session";
 import { requireWeddingInOrg, NotFoundOrForbiddenError } from "@/lib/db-scope";
-import { prisma } from "@/lib/prisma";
-import { parseProviderParam, isLinkImportAvailable, resolveGoogleDriveAuth, resolveDropboxToken, parseGoogleDriveFolderLink, looksLikeDropboxLink } from "@/lib/cloud";
-import { runLinkImportJob } from "@/lib/import-pipeline";
+import {
+  parseProviderParam,
+  isLinkImportAvailable,
+  resolveLinkAuth,
+  listImagesForLink,
+  parseGoogleDriveFolderLink,
+  looksLikeDropboxLink,
+} from "@/lib/cloud";
 import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
-// The "drop a link" path: paste a shared Google Drive folder link or
-// Dropbox shared link and import starts immediately — no OAuth consent
-// screen required as long as GOOGLE_DRIVE_API_KEY / DROPBOX_REFRESH_TOKEN
-// (or an existing "Connect" flow OAuth connection) is configured.
+/**
+ * Opens a pasted link and lists what's inside it — without importing or
+ * downloading anything — so the browse-and-select UI can show a thumbnail
+ * grid the user picks from before anything is added to the wedding.
+ */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await requireSession();
 
-  const limit = rateLimit(`link-import:${session.user.organizationId}`, 20, 60_000);
+  const limit = rateLimit(`link-preview:${session.user.organizationId}`, 30, 60_000);
   if (!limit.ok) return NextResponse.json({ error: "Too many requests." }, { status: 429 });
 
   try {
@@ -29,11 +35,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const providerSlug = String(body.provider || "");
   const provider = providerSlug === "google-drive" ? "GOOGLE_DRIVE" : providerSlug === "dropbox" ? "DROPBOX" : parseProviderParam(providerSlug);
   const link = String(body.link || "").trim();
-  // From the browse-and-select preview: only import the photos the user
-  // checked. Omit/empty to fall back to importing everything in the folder.
-  const imageIds: string[] | undefined = Array.isArray(body.imageIds)
-    ? body.imageIds.filter((x: unknown): x is string => typeof x === "string" && x.length > 0)
-    : undefined;
 
   if (!provider) return NextResponse.json({ error: "Unknown provider." }, { status: 400 });
   if (!link) return NextResponse.json({ error: "Paste a link first." }, { status: 400 });
@@ -47,10 +48,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const organizationId = session.user.organizationId;
-  const hasAuth =
-    provider === "GOOGLE_DRIVE" ? Boolean(await resolveGoogleDriveAuth(organizationId)) : Boolean(await resolveDropboxToken(organizationId));
-
-  if (!hasAuth) {
+  const auth = await resolveLinkAuth(organizationId, provider, link);
+  if (!auth) {
     const providerName = provider === "GOOGLE_DRIVE" ? "Google Drive" : "Dropbox";
     const envHint = provider === "GOOGLE_DRIVE" ? "GOOGLE_DRIVE_API_KEY" : "DROPBOX_REFRESH_TOKEN";
     return NextResponse.json(
@@ -63,11 +62,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  const job = await prisma.photoImportJob.create({
-    data: { weddingId: params.id, source: provider, status: "PENDING", sourceLabel: link },
-  });
-
-  void runLinkImportJob(job.id, provider, link, imageIds && imageIds.length > 0 ? imageIds : undefined);
-
-  return NextResponse.json({ jobId: job.id });
+  try {
+    const { folderName, images } = await listImagesForLink(auth, link);
+    return NextResponse.json({ folderName, images });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Could not open that link." }, { status: 502 });
+  }
 }

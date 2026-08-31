@@ -9,6 +9,8 @@ export type CloudImage = {
   name: string;
   mimeType: string;
   sizeBytes: number | null;
+  /** Direct provider-hosted thumbnail URL, when the provider gives us one for free (Google Drive does). Null otherwise — the UI falls back to a proxy route that generates one on demand. */
+  thumbnailUrl?: string | null;
 };
 
 export type CloudTokens = {

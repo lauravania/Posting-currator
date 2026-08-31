@@ -1,23 +1,28 @@
 import type { CloudProvider } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
-import { googleDriveAdapter, isGoogleDriveApiKeyConfigured } from "./google-drive";
-import { dropboxAdapter, isDropboxLinkImportConfigured, getAppAccessToken as getDropboxAppAccessToken } from "./dropbox";
-import type { CloudProviderAdapter, CloudTokens } from "./types";
-
-export * from "./types";
-export {
+import {
+  googleDriveAdapter,
+  isGoogleDriveApiKeyConfigured,
   parseGoogleDriveFolderLink,
   getPublicFolderName as getGoogleDrivePublicFolderName,
+  getFolderNameOAuth as getGoogleDriveFolderNameOAuth,
   listImagesInPublicFolder as listGoogleDrivePublicFolderImages,
   downloadPublicImage as downloadGoogleDrivePublicImage,
 } from "./google-drive";
-export {
-  looksLikeDropboxLink,
+import {
+  dropboxAdapter,
+  isDropboxLinkImportConfigured,
+  getAppAccessToken as getDropboxAppAccessToken,
   getSharedLinkName as getDropboxSharedLinkName,
   listImagesInSharedLink as listDropboxSharedLinkImages,
   downloadSharedLinkFile as downloadDropboxSharedLinkFile,
 } from "./dropbox";
+import type { CloudProviderAdapter, CloudTokens, CloudImage } from "./types";
+
+export * from "./types";
+export { parseGoogleDriveFolderLink, downloadPublicImage as downloadGoogleDrivePublicImage } from "./google-drive";
+export { looksLikeDropboxLink, downloadSharedLinkFile as downloadDropboxSharedLinkFile } from "./dropbox";
 
 const ADAPTERS: Record<CloudProvider, CloudProviderAdapter> = {
   GOOGLE_DRIVE: googleDriveAdapter,
@@ -154,4 +159,58 @@ export async function resolveDropboxToken(organizationId: string): Promise<strin
   if (oauthToken) return oauthToken;
   if (isDropboxLinkImportConfigured()) return getDropboxAppAccessToken();
   return null;
+}
+
+export type LinkAuth =
+  | { provider: "GOOGLE_DRIVE"; mode: "oauth"; accessToken: string; folderId: string }
+  | { provider: "GOOGLE_DRIVE"; mode: "apikey"; apiKey: string; folderId: string }
+  | { provider: "DROPBOX"; accessToken: string };
+
+/** Resolves whatever's needed to read a pasted link (OAuth connection first, then the simple key/token) — the one place both the preview and import routes figure out "can we actually reach this link, and how". */
+export async function resolveLinkAuth(organizationId: string, provider: CloudProvider, link: string): Promise<LinkAuth | null> {
+  if (provider === "GOOGLE_DRIVE") {
+    const folderId = parseGoogleDriveFolderLink(link);
+    if (!folderId) return null;
+    const auth = await resolveGoogleDriveAuth(organizationId);
+    if (!auth) return null;
+    return auth.mode === "oauth"
+      ? { provider, mode: "oauth", accessToken: auth.accessToken, folderId }
+      : { provider, mode: "apikey", apiKey: auth.apiKey, folderId };
+  }
+  const accessToken = await resolveDropboxToken(organizationId);
+  if (!accessToken) return null;
+  return { provider, accessToken };
+}
+
+/** Lists a link's folder name + images without downloading/importing anything — used by the preview (browse-and-select) endpoint, and internally by the import job once files are actually chosen. */
+export async function listImagesForLink(auth: LinkAuth, link: string): Promise<{ folderName: string; images: CloudImage[] }> {
+  if (auth.provider === "GOOGLE_DRIVE") {
+    if (auth.mode === "oauth") {
+      const [folderName, images] = await Promise.all([
+        getGoogleDriveFolderNameOAuth(auth.accessToken, auth.folderId),
+        getCloudAdapter("GOOGLE_DRIVE").listImagesInFolder(auth.accessToken, auth.folderId),
+      ]);
+      return { folderName, images };
+    }
+    const [folderName, images] = await Promise.all([
+      getGoogleDrivePublicFolderName(auth.apiKey, auth.folderId),
+      listGoogleDrivePublicFolderImages(auth.apiKey, auth.folderId),
+    ]);
+    return { folderName, images };
+  }
+  const [folderName, images] = await Promise.all([
+    getDropboxSharedLinkName(auth.accessToken, link),
+    listDropboxSharedLinkImages(auth.accessToken, link),
+  ]);
+  return { folderName, images };
+}
+
+/** Downloads one previously-listed image, using whichever auth mode resolveLinkAuth settled on. */
+export async function downloadLinkImage(auth: LinkAuth, link: string, image: CloudImage) {
+  if (auth.provider === "GOOGLE_DRIVE") {
+    return auth.mode === "oauth"
+      ? getCloudAdapter("GOOGLE_DRIVE").downloadImage(auth.accessToken, image)
+      : downloadGoogleDrivePublicImage(auth.apiKey, image);
+  }
+  return downloadDropboxSharedLinkFile(auth.accessToken, link, image);
 }

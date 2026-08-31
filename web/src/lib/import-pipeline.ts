@@ -5,15 +5,11 @@ import { randomId, sanitizeFilename } from "@/lib/id";
 import { ALLOWED_IMAGE_TYPES, MAX_UPLOAD_BYTES } from "@/lib/validation";
 import { analyzeAndSavePhoto } from "@/lib/curation";
 import {
+  resolveLinkAuth,
+  listImagesForLink,
+  downloadLinkImage,
   getValidAccessToken,
   getCloudAdapter,
-  resolveGoogleDriveAuth,
-  resolveDropboxToken,
-  parseGoogleDriveFolderLink,
-  listGoogleDrivePublicFolderImages,
-  downloadGoogleDrivePublicImage,
-  listDropboxSharedLinkImages,
-  downloadDropboxSharedLinkFile,
   type CloudImage,
 } from "@/lib/cloud";
 import type { ImportSource } from "@prisma/client";
@@ -165,35 +161,32 @@ export async function runCloudImportJob(jobId: string, provider: "GOOGLE_DRIVE" 
  * credential (GOOGLE_DRIVE_API_KEY / DROPBOX_REFRESH_TOKEN) which only
  * reaches folders/links shared as "Anyone with the link". Same
  * import-then-auto-analyze shape as runCloudImportJob.
+ *
+ * When `selectedImageIds` is given (the browse-and-select flow: the user
+ * previewed the folder and checked specific photos), only those are
+ * imported. Omit it to import everything in the folder in one shot.
  */
-export async function runLinkImportJob(jobId: string, provider: "GOOGLE_DRIVE" | "DROPBOX", link: string) {
+export async function runLinkImportJob(
+  jobId: string,
+  provider: "GOOGLE_DRIVE" | "DROPBOX",
+  link: string,
+  selectedImageIds?: string[]
+) {
   const job = await prisma.photoImportJob.findUniqueOrThrow({ where: { id: jobId }, include: { wedding: true } });
   const organizationId = job.wedding.organizationId;
 
   try {
-    let images: CloudImage[];
-    let downloadOne: (image: CloudImage) => Promise<{ buffer: Buffer; mimeType: string; filename: string }>;
-
-    if (provider === "GOOGLE_DRIVE") {
-      const folderId = parseGoogleDriveFolderLink(link);
-      if (!folderId) throw new Error("That doesn't look like a Google Drive folder link.");
-      const auth = await resolveGoogleDriveAuth(organizationId);
-      if (!auth) throw new Error("Google Drive isn't connected and no GOOGLE_DRIVE_API_KEY is configured for link import.");
-
-      if (auth.mode === "oauth") {
-        const adapter = getCloudAdapter("GOOGLE_DRIVE");
-        images = await adapter.listImagesInFolder(auth.accessToken, folderId);
-        downloadOne = (image) => adapter.downloadImage(auth.accessToken, image);
-      } else {
-        images = await listGoogleDrivePublicFolderImages(auth.apiKey, folderId);
-        downloadOne = (image) => downloadGoogleDrivePublicImage(auth.apiKey, image);
-      }
-    } else {
-      const accessToken = await resolveDropboxToken(organizationId);
-      if (!accessToken) throw new Error("Dropbox isn't connected and no DROPBOX_REFRESH_TOKEN is configured for link import.");
-      images = await listDropboxSharedLinkImages(accessToken, link);
-      downloadOne = (image) => downloadDropboxSharedLinkFile(accessToken, link, image);
+    const auth = await resolveLinkAuth(organizationId, provider, link);
+    if (!auth) {
+      throw new Error(
+        provider === "GOOGLE_DRIVE"
+          ? "Google Drive isn't connected and no GOOGLE_DRIVE_API_KEY is configured for link import."
+          : "Dropbox isn't connected and no DROPBOX_REFRESH_TOKEN is configured for link import."
+      );
     }
+
+    const { images: allImages } = await listImagesForLink(auth, link);
+    const images = selectedImageIds ? allImages.filter((img) => selectedImageIds.includes(img.id)) : allImages;
 
     await prisma.photoImportJob.update({ where: { id: jobId }, data: { totalFiles: images.length, status: "IMPORTING" } });
 
@@ -202,8 +195,8 @@ export async function runLinkImportJob(jobId: string, provider: "GOOGLE_DRIVE" |
       return;
     }
 
-    await mapWithConcurrency(images, 3, async (image) => {
-      const download = await downloadOne(image);
+    await mapWithConcurrency(images, 3, async (image: CloudImage) => {
+      const download = await downloadLinkImage(auth, link, image);
       await importPhotoBuffer({
         weddingId: job.weddingId,
         buffer: download.buffer,
